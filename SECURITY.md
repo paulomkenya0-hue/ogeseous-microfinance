@@ -1,5 +1,18 @@
 # OGESEOUS MICROFINANCE — Security & Deployment (Step 12)
 
+> ## TODO — MAKE THIS REPOSITORY PRIVATE
+> This repo is **public** while setup is in progress. It must be switched to private before
+> the app is deployed or anyone outside the team is given access.
+> **How:** repo → `Settings` → `Danger Zone` → `Change repository visibility` → `Make private`.
+> **Verify it worked:** open the repo in a browser while logged OUT — you should get a 404.
+>
+> Why it matters even though nothing sensitive is committed: the SQL migrations *are* the security
+> model. They publish every role, every RLS policy and every money-handling function. No secrets
+> and no student PII are in git (those live in the Supabase database), so the exposure is the
+> design, not the data — but there is no reason for a live financial system to publish it.
+> Note that git history is permanent: making it private later protects everything from that point
+> on, but anything already scraped stays scraped. See `supabase/` for the sensitive part.
+
 This environment has no network access, so nothing here has been deployed or penetration-tested.
 This is a checklist and a summary of what the code already does, for whoever deploys it.
 
