@@ -7,3 +7,7 @@ dist
 .env.*
 # ...except the empty template, which is meant to be committed.
 !.env.example
+
+# Supabase CLI local machine state: project ref, pooler URL, service version pins.
+# This is per-developer, not part of the project.
+supabase/.temp
