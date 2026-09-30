@@ -1,0 +1,7 @@
+# Normalise line endings so every clone — Windows, Linux, or a CI runner — produces
+# identical files. Without this, core.autocrlf=true on Windows rewrites LF to CRLF
+# and diffs get noisy for changes that were never made.
+#
+# The app deploys to Linux hosts (Vercel/Netlify), which expect LF, and no file in this
+# repo is binary, so LF everywhere is correct.
+* text=auto eol=lf
