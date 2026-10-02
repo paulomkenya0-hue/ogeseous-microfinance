@@ -31,11 +31,27 @@
 -- The schedule always reconciles exactly: the final installment is the total minus everything
 -- allocated before it, so amount_paid sums to the payments taken and outstanding_balance sums to
 -- what is left. Rounding never leaks into a total.
+--
+-- THIS FILE IS SAFE TO RUN MORE THAN ONCE, including after a partial failure. Two reasons it has to
+-- be, both learned the hard way:
+--
+--   * Postgres runs each statement in the SQL editor as its own transaction, so when this file
+--     stopped at list_arrears() the statements before it had already committed. Every CREATE is
+--     therefore guarded, so re-running finishes the job instead of failing on "relation already
+--     exists".
+--   * CREATE OR REPLACE cannot change a function's RETURN TYPE (42P13). list_arrears() and
+--     get_dashboard_stats() gain columns here, so they are dropped first. If you ever add or remove
+--     an OUT column on any function in this file, add or keep the matching
+--     `drop function if exists` immediately above it, or the whole file stops at that statement.
 
 -- ---------------------------------------------------------------------------------------
 -- 1. The schedule.
 -- ---------------------------------------------------------------------------------------
-create table public.loan_installments (
+-- Every statement in this file is re-runnable. Postgres runs each statement in the SQL editor as
+-- its own transaction, so an earlier failure leaves the statements before it committed — without
+-- these guards, simply running the file again then fails on "relation already exists" and you are
+-- left guessing how far it got.
+create table if not exists public.loan_installments (
   id uuid primary key default gen_random_uuid(),
   loan_id uuid not null references public.loans(id) on delete cascade,
   seq integer not null check (seq > 0),
@@ -49,14 +65,18 @@ create table public.loan_installments (
   unique (loan_id, seq),
   check (amount_paid <= amount_due)
 );
+drop trigger if exists trg_installment_touch on public.loan_installments;
 create trigger trg_installment_touch before update on public.loan_installments
   for each row execute function public.touch_updated_at();
 
 -- Arrears are always "unpaid installments past their date", so that is the index that matters.
-create index installments_due_date_idx on public.loan_installments (due_date) where status <> 'PAID';
-create index installments_loan_idx on public.loan_installments (loan_id, seq);
+create index if not exists installments_due_date_idx on public.loan_installments (due_date) where status <> 'PAID';
+create index if not exists installments_loan_idx on public.loan_installments (loan_id, seq);
 
 alter table public.loan_installments enable row level security;
+-- There is no "create policy if not exists"; drop first. Postgres would otherwise raise
+-- "policy already exists" and the rest of this file would never run.
+drop policy if exists "owner or staff read installments" on public.loan_installments;
 create policy "owner or staff read installments" on public.loan_installments for select using (
   exists (select 1 from public.loans l where l.id = loan_id and (l.user_id = auth.uid()
     or exists (select 1 from public.users u where u.id = auth.uid()
@@ -70,8 +90,8 @@ on conflict (key) do nothing;
 
 -- ---------------------------------------------------------------------------------------
 -- 2. build_loan_schedule(): generate the term. Called at disbursement, and by
---    rebuild_loan_schedule() when a term or rate changes. Destroys payment history, so it is
---    only ever called on a loan with no repayments against it.
+--    recalculate_loan() when a schedule needs rebuilding from the payments actually taken.
+--    Destroys payment history, so it is only ever called on a loan with no repayments against it.
 -- ---------------------------------------------------------------------------------------
 create or replace function public.build_loan_schedule(p_loan_id uuid) returns void
 language plpgsql security definer set search_path = public as $$
@@ -456,6 +476,14 @@ grant execute on function public.mark_loan_defaulted(uuid,text) to authenticated
 -- 9. list_arrears(): rewritten against installments, so a loan is in arrears from the first
 --    missed month instead of from one single date at the end of the term.
 -- ---------------------------------------------------------------------------------------
+-- Postgres cannot change a function's return type with CREATE OR REPLACE (42P13), so the old
+-- one has to go first. 008 declared six OUT columns and this returns nine, because arrears are
+-- now counted per installment rather than as one lump due at the end of the term.
+--
+-- The revoke/grant pair below is reapplied after the create, so dropping does not leave the
+-- function executable by PUBLIC, which is the default for every new function.
+drop function if exists public.list_arrears();
+
 create or replace function public.list_arrears()
 returns table (
   loan_id uuid, student_name text, university text, outstanding numeric,
@@ -517,6 +545,11 @@ grant execute on function public.get_loan_schedule(uuid) to authenticated;
 --         of a loan, because payments are allocated by due date rather than pro rata, and any
 --         such split would be an invention. For the live position, use overdue_balance.
 -- ---------------------------------------------------------------------------------------
+-- Same 42P13 problem as list_arrears(): 009 and 011 declared nine OUT columns and this returns
+-- thirteen, adding the scheduled total, the interest billed, the overdue balance and the number of
+-- loans in arrears. Drop before replacing; the grants are reapplied below.
+drop function if exists public.get_dashboard_stats();
+
 create or replace function public.get_dashboard_stats()
 returns table (
   total_students bigint, verified_students bigint, total_applications bigint, submitted_applications bigint,
