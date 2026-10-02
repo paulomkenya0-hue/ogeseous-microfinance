@@ -20,7 +20,7 @@ export function restoreDeepLink(bounced: string | null, base: string): string | 
   if (!bounced.startsWith('/') || bounced.startsWith('//')) return null
 
   // 404.html records the whole pathname, which already carries the base. Strip it before putting
-  // it back, or the path doubles: /ogeseous-microfinance/ogeseous-microfinance/student/loan.
+  // it back, or the path doubles: /ogeseous-microfinance/ogeseous-microfinance/loan/application.
   const withoutBase = bounced.startsWith(base) ? bounced.slice(base.length - 1) : bounced
 
   // Strip any remaining leading slashes so the join never produces '//'.

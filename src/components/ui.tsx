@@ -68,17 +68,97 @@ export const Badge = ({ tone = 'slate', children }: { tone?: Tone; children: Rea
 
 export const STATUS_TONE: Record<string, Tone> = {
   NOT_STARTED: 'slate',
+  NOT_APPLIED: 'slate',
+  DRAFT: 'slate',
   PENDING: 'amber',
   SUBMITTED: 'amber',
   UNDER_REVIEW: 'blue',
+  ACTION_REQUIRED: 'amber',
   VERIFIED: 'green',
   APPROVED: 'green',
   ACTIVE: 'green',
+  COMPLETED: 'navy',
   REJECTED: 'red',
   DEFAULTED: 'red',
   SUSPENDED: 'red',
   CLOSED: 'slate',
   DISBURSED: 'navy',
+}
+
+/**
+ * The wizard's progress indicator.
+ *
+ * A horizontal strip of numbered steps. Two details that are easy to get wrong and matter:
+ *
+ *   - `aria-current="step"` on the active step, so a screen reader announces where you are rather
+ *     than reading seven items with no relationship between them;
+ *   - completed steps are links, not decoration. A student who has finished documents and wants to
+ *     check their guarantor details can go back, and going back must not silently discard what they
+ *     already saved.
+ */
+export function Stepper({
+  labels,
+  current,
+  onGo,
+}: {
+  labels: { key: string; label: string }[]
+  current: string
+  onGo?: (key: string) => void
+}) {
+  const here = labels.findIndex((s) => s.key === current)
+  return (
+    <nav aria-label="Application progress" className="overflow-x-auto">
+      <ol className="flex min-w-max items-center gap-1 text-xs">
+        {labels.map((s, i) => {
+          const done = here > i
+          const active = s.key === current
+          const inner = (
+            <>
+              <span
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-[11px] font-semibold ${
+                  active
+                    ? 'border-brand bg-brand text-white'
+                    : done
+                      ? 'border-green-600 bg-green-600 text-white'
+                      : 'border-slate-300 bg-white text-slate-500'
+                }`}
+              >
+                {i + 1}
+              </span>
+              <span
+                className={
+                  active
+                    ? 'font-semibold text-navy'
+                    : done
+                      ? 'text-green-700'
+                      : 'text-slate-500'
+                }
+              >
+                {s.label}
+              </span>
+            </>
+          )
+          return (
+            <li key={s.key} className="flex items-center gap-1">
+              {i > 0 && <span aria-hidden="true" className="px-1 text-slate-300">›</span>}
+              {done && onGo ? (
+                <button type="button" onClick={() => onGo(s.key)} className="flex items-center gap-1.5 hover:underline">
+                  {inner}
+                </button>
+              ) : (
+                <span
+                  className="flex items-center gap-1.5"
+                  aria-current={active ? 'step' : undefined}
+                >
+                  {inner}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </nav>
+  )
 }
 
 /** Money always goes through this so a reversed or negative figure is impossible to misread. */
@@ -169,3 +249,37 @@ export const date = (v: string | null | undefined): string =>
 
 export const dateTime = (v: string | null | undefined): string =>
   v ? new Date(v).toLocaleString() : '—'
+
+/** One label/value pair in a definition list. Used by the wizard's review page. */
+export const Row = ({ label, children }: { label: string; children: ReactNode }) => (
+  <div className="border-b border-slate-100 py-2 last:border-0 sm:flex sm:gap-3">
+    <dt className="text-sm font-medium text-slate-600 sm:w-48 sm:shrink-0">{label}</dt>
+    <dd className="text-sm text-navy">{children}</dd>
+  </div>
+)
+
+/**
+ * A value the student can see but not change.
+ *
+ * Used for the fields that come out of the RUCU register. This is the point of the whole step-1
+ * lookup: a student who cannot edit the name on the application cannot make the application say
+ * something the register does not. The hint says so, because an uneditable field with no
+ * explanation reads as a broken form.
+ */
+export const ReadOnly = ({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string | null | undefined
+  hint?: string
+}) => (
+  <div>
+    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+    <dd className="mt-0.5 text-sm font-medium text-navy">
+      {value?.trim() ? value : <span className="text-slate-400">Not in the register</span>}
+    </dd>
+    {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
+  </div>
+)

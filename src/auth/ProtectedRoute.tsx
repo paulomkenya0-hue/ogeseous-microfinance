@@ -43,8 +43,10 @@ export default function ProtectedRoute({ area }: { area: 'student' | 'admin' }) 
     )
   }
 
+  // Each area sends you to the other one rather than to a dead end. A staff member who followed a
+  // student link lands on the admin console instead of being told to log in again, and vice versa.
   const allowed = area === 'student' ? role === 'STUDENT' : (STAFF_ROLES as readonly string[]).includes(role)
-  if (!allowed) return <Navigate to={role === 'STUDENT' ? '/student/dashboard' : '/admin'} replace />
+  if (!allowed) return <Navigate to={role === 'STUDENT' ? '/dashboard' : '/admin'} replace />
 
   return <Outlet />
 }

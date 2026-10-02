@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react'
-import { Routes, Route, Link } from 'react-router-dom'
+import { Routes, Route, Link, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import ErrorBoundary from './components/ErrorBoundary'
 import ProtectedRoute from './auth/ProtectedRoute'
@@ -22,9 +22,9 @@ import { Home, About, HowItWorks, Contact, Legal } from './pages/Public'
  */
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const VerifyPublic = lazy(() => import('./pages/VerifyPublic'))
-const StudentDashboard = lazy(() => import('./pages/Student'))
-const Verify = lazy(() => import('./pages/Verify'))
-const LoanApply = lazy(() => import('./pages/LoanApply'))
+const TrackPublic = lazy(() => import('./pages/TrackPublic'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const LoanWizard = lazy(() => import('./pages/LoanWizard'))
 const ApplicationView = lazy(() => import('./pages/ApplicationView'))
 const StudentLoan = lazy(() => import('./pages/StudentLoan'))
 const AdminShell = lazy(() => import('./pages/Admin'))
@@ -62,14 +62,38 @@ export default function App() {
             <Route path="/privacy" element={<Legal title="Privacy Policy" />} />
             <Route path="/terms" element={<Legal title="Terms & Conditions" />} />
             <Route path="/verify" element={<VerifyPublic />} />
+            <Route path="/track" element={<TrackPublic />} />
 
+            {/**
+             The student area. These four URLs are the canonical ones; the /student/* paths below
+             are redirects kept for links that already exist in the wild (bookmarks, a printed
+             receipt, a message somebody forwarded). A redirect rather than a second page, so
+             there is exactly one dashboard, one wizard and one application view to keep correct.
+            */}
             <Route element={<ProtectedRoute area="student" />}>
-              <Route path="/student/dashboard" element={<StudentDashboard />} />
-              <Route path="/student/verify" element={<Verify />} />
-              <Route path="/student/apply" element={<LoanApply />} />
-              <Route path="/student/application" element={<ApplicationView />} />
-              <Route path="/student/loan" element={<StudentLoan />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/loan/apply" element={<LoanWizard />} />
+              {/* No :id. A student has exactly one current application, and RLS refuses anything
+                  else, so a parameter here would only invite somebody to point it at another
+                  student's row and be shown a permission error instead of their own page. */}
+              <Route path="/loan/application" element={<ApplicationView />} />
+              <Route path="/loan/schedule" element={<StudentLoan />} />
+              {/* /loan was the application page before it was named properly. */}
+              <Route path="/loan" element={<Navigate to="/loan/application" replace />} />
+
+              <Route path="/student/dashboard" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/student/apply" element={<Navigate to="/loan/apply" replace />} />
+              <Route path="/student/application" element={<Navigate to="/loan/application" replace />} />
+              <Route path="/student/loan" element={<Navigate to="/loan/schedule" replace />} />
+              {/* Verification moved into step 1 of the wizard: the RUCU lookup is part of applying,
+                  not a separate journey. Anyone still sent here lands on the wizard. */}
+              <Route path="/student/verify" element={<Navigate to="/loan/apply" replace />} />
             </Route>
+
+            {/* /admin/login is an old bookmark. It redirects rather than rendering a second sign-in
+                form, because a separate staff form is not a security boundary — the role in
+                public.users is, and Login reads it the same way for everybody. */}
+            <Route path="/admin/login" element={<Navigate to="/login" replace />} />
 
             <Route element={<ProtectedRoute area="admin" />}>
               <Route path="/admin/*" element={<AdminShell />} />

@@ -7,13 +7,13 @@ const ROOT = '/'
 describe('restoreDeepLink', () => {
   it('does not double the base path — the bug this whole function exists for', () => {
     // 404.html stores the full pathname, which already contains the base. Re-applying the base
-    // naively produced /ogeseous-microfinance/ogeseous-microfinance/student/loan.
-    expect(restoreDeepLink(`${SUB}student/loan`, SUB)).toBe(`${SUB}student/loan`)
+    // naively produced /ogeseous-microfinance/ogeseous-microfinance/loan/application.
+    expect(restoreDeepLink(`${SUB}loan/application`, SUB)).toBe(`${SUB}loan/application`)
     expect(restoreDeepLink(`${SUB}admin/loans`, SUB)).toBe(`${SUB}admin/loans`)
   })
 
   it('handles a site served from the domain root', () => {
-    expect(restoreDeepLink('/student/loan', ROOT)).toBe('/student/loan')
+    expect(restoreDeepLink('/loan/application', ROOT)).toBe('/loan/application')
     expect(restoreDeepLink('/', ROOT)).toBe('/')
   })
 
@@ -32,7 +32,7 @@ describe('restoreDeepLink', () => {
   it('refuses anything that is not an absolute path', () => {
     expect(restoreDeepLink('javascript:alert(1)', SUB)).toBeNull()
     expect(restoreDeepLink('https://evil.example', SUB)).toBeNull()
-    expect(restoreDeepLink('student/loan', SUB)).toBeNull()
+    expect(restoreDeepLink('loan/application', SUB)).toBeNull()
   })
 
   it('does nothing when there was nothing stored', () => {

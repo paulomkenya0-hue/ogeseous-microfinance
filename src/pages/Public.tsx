@@ -17,11 +17,18 @@ const FEATURES: [string, string][] = [
   ['Transparent process', 'Clear steps, a published repayment schedule, and an application you can check with its verification code.'],
 ]
 
+/**
+ * The public description of the process. It must match what the wizard actually asks for, because
+ * this is what a student reads before deciding to spend twenty minutes on the form. It used to say
+ * "Register, Verify, Apply, Track", which promised a separate verification upload that is now step 1
+ * of the application itself — and a student who read it would have gone looking for a page that no
+ * longer exists.
+ */
 const STEPS: [string, string, string][] = [
-  ['01', 'Register', 'Create your student account with an email address and a password.'],
-  ['02', 'Verify', 'Upload your Form Four certificate, identity document and passport photo. RUCU students are matched against the student register automatically.'],
-  ['03', 'Apply', 'Enter the amount you need and the repayment period, then accept the Terms & Conditions and submit.'],
-  ['04', 'Track', 'Follow your application and, once money is disbursed, your monthly repayment schedule and balance.'],
+  ['01', 'Create an account', 'Register once with your name, email address, phone number and a password. There is no email confirmation step.'],
+  ['02', 'Find your student record', 'Enter your registration number and last name. RUCU students are matched against the register and their name, programme and year come back read-only. Students of the other universities enter their own details, and staff confirm them during review.'],
+  ['03', 'Apply', 'A seven-step form: your record, the loan you need, your contact details, your finances, a guarantor, your documents, and a final review. You can stop and come back — nothing reaches OGESEOUS until you submit.'],
+  ['04', 'Track', 'You are given an application number such as OGS-2026-000184. Follow it from your account, or from the public tracking page using that number together with your phone number.'],
 ]
 
 export function Home() {
@@ -79,9 +86,8 @@ export function Home() {
           ))}
         </div>
         <p className="mt-4 text-sm text-slate-600">
-          Student eligibility is subject to verification and OGESEOUS Microfinance requirements.
-          Submitting verification documents is not approval — a member of staff reviews every
-          application.
+          Student eligibility is subject to confirmation of student status and OGESEOUS Microfinance
+          requirements. Applying is not approval — a member of staff reviews every application.
         </p>
       </Sec>
 
@@ -127,8 +133,7 @@ export function HowItWorks() {
           Your loan is divided into monthly installments from the agreed term, each with its own due
           date. Sign in to see the schedule, what you have paid and what is still outstanding.
           Payments are applied to the oldest unpaid installment first. If you fall behind, contact
-          OGESEOUS before a payment is missed — the arrears page on your dashboard shows exactly
-          where you stand.
+          OGESEOUS before a payment is missed — your loan page shows exactly where you stand.
         </p>
       </div>
     </Sec>
@@ -174,16 +179,16 @@ export function About() {
     ['Our purpose', 'To provide student-focused financial support for eligible university students.'],
     [
       'Who we serve',
-      'Students of Ruaha Catholic University, Mkwawa University College and Iringa University, subject to verification.',
+      'Students of Ruaha Catholic University, Mkwawa University College and Iringa University, subject to confirmation of student status.',
     ],
-    ['Our process', 'Register, verify, apply, and track your application and repayment schedule from your account.'],
+    ['Our process', 'Register once, then apply in seven steps and track your application from your account or from the public tracking page.'],
     [
       'How we check identity',
       'RUCU students are matched against the university student register. Students at the other supported universities are checked by staff against the documents they upload.',
     ],
     [
       'What we never do',
-      'We never allow a student to edit a verified name, university or registration number after approval, and we never approve an application automatically.',
+      'We never allow a student to edit a name, university or registration number that came from the register, we never treat a completed form as a submitted application, and we never approve an application automatically.',
     ],
   ]
 
@@ -321,17 +326,18 @@ export function Legal({ title }: { title: string }) {
 
   const facts: [string, string][] = isPrivacy
     ? [
-        ['What is collected', 'Your email address and password hash (held by Supabase Auth, not by this application), your name and phone number, and the three verification documents you upload.'],
-        ['Who can read your documents', 'Only OGESEOUS staff. Other students cannot, and neither can the public. The documents are stored in a private storage bucket.'],
-        ['What is public', 'Only what you explicitly look up with the application number and verification code on the /verify page: the application number, your name, your university, the status and the submission date. Nothing else is public.'],
-        ['What staff can change', 'Your verified name, university, registration number and Form Four index number. You cannot change these yourself — that is deliberate, so that what appears on your application is what was verified.'],
-        ['How long records are kept', 'Loan records are retained as the institution\'s financial records. Verification documents can be deleted by you before submission.'],
+        ['What is collected', 'Your email address and password hash (held by Supabase Auth, not by this application), your name, phone number and address, the financial and guarantor details you enter on the application form, and the application documents you upload.'],
+        ['Who can read your documents', 'You, and OGESEOUS staff reviewing your application. Other students cannot, and neither can the public. The documents sit in a private storage bucket and are opened through links that expire after a minute — there is no permanent link to any of them.'],
+        ['What is public', 'Nothing about your application is public by itself. Two things can be looked up without signing in: the /verify page, which needs the application number and the verification code on your printed copy; and the /track page, which needs the application number together with the phone number on your account. The tracking page shows a status, two dates, your initials and how many documents are still outstanding. It does not show the amount, your name, your registration number or your documents.'],
+        ['What staff can change', 'Your verified name, university, registration number and Form Four index number, and your application status. You cannot change the identity fields yourself — that is deliberate, so that what appears on your application is what the register holds.'],
+        ['How long records are kept', 'Loan records are retained as the institution\'s financial records. Application documents can be replaced or your account deleted before a loan exists on record.'],
         ['Deleting your account', 'You can request deletion from your dashboard while no loan is on record. If a loan exists, the account cannot be deleted, because that would delete the institution\'s record of the debt — the loan must be settled or written off first.'],
         ['Every staff action is logged', 'Approvals, rejections, disbursements, repayments, reversals, role changes and account suspensions are written to an audit log with the acting staff member and the time.'],
       ]
     : [
-        ['Who may apply', 'Students of Ruaha Catholic University, Mkwawa University College or Iringa University, whose identity has been verified.'],
-        ['Approval is not automatic', 'Every application is reviewed by staff. Verification confirms you are a student; it does not entitle you to a loan.'],
+        ['Who may apply', 'Students of Ruaha Catholic University, Mkwawa University College or Iringa University. RUCU students are matched against the student register; students of the other two are confirmed by staff from their documents during review.'],
+        ['Approval is not automatic', 'Every application is reviewed by a person. Being a student does not entitle you to a loan, and nothing on the form is approved automatically.'],
+        ['Nothing is submitted until you say so', 'What you type is saved as you go, but a draft is invisible to OGESEOUS and cannot be reviewed. Review begins only when you submit on the last step, after confirming the information is true and correct.'],
         ['Amount and term', 'The permitted amount and the repayment periods are set by OGESEOUS and displayed on the application form before you submit.'],
         ['Repayment', 'Your loan is divided into monthly installments from the agreed term, each with its own due date. Payments are applied to the oldest unpaid installment first.'],
         ['Interest', 'Whether interest is charged, at what rate and on which convention, is stated to you before you submit. If no rate is shown on your application, none is being charged.'],

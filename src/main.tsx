@@ -11,7 +11,7 @@ const root = document.getElementById('root')
 if (!root) throw new Error('index.html is missing its #root element')
 
 // Restore a deep link that GitHub Pages bounced off the SPA: Pages has no rewrite rules, so it
-// serves public/404.html for any route path. Without this a student who refreshed /student/loan,
+// serves public/404.html for any route path. Without this a student who refreshed /loan/application,
 // or followed a password reset link, would land on the homepage with no way back.
 // Done before React mounts, because BrowserRouter reads the URL once.
 const restored = restoreDeepLink(sessionStorage.getItem(REDIRECT_KEY), import.meta.env.BASE_URL)

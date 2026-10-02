@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 013 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 014 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 10 migrations' objects exist?
+-- 1. Do all 14 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -19,6 +19,7 @@ with expected(grp, name) as (values
   ('table','marketing_officers'), ('table','referral_captures'),
   ('table','loan_applications'), ('table','loans'), ('table','repayments'),
   ('table','collection_reminders'), ('table','app_settings'), ('table','loan_installments'),
+  ('table','loan_documents'), ('table','application_status_history'),
   ('function','handle_new_user'), ('function','guard_protected_columns'),
   ('function','trusted_write'), ('function','in_trusted_write'),
   ('function','search_rucu_student'), ('function','submit_verification'),
@@ -37,7 +38,15 @@ with expected(grp, name) as (values
   ('function','build_loan_schedule'), ('function','rebuild_loan_payments'), ('function','recalculate_loan'),
   ('function','reverse_repayment'), ('function','void_disbursement'), ('function','mark_loan_defaulted'),
   ('function','get_loan_schedule'), ('function','delete_my_account'),
-  ('index','one_identity_per_account'), ('index','repayments_reference_uniq')
+  ('function','verify_student_from_register'), ('function','declare_application_student'),
+  ('function','save_application_loan'), ('function','save_application_financial'),
+  ('function','save_application_guarantor'),
+  ('function','save_application_contact'), ('function','attach_application_document'),
+  ('function','resubmit_application'), ('function','get_application_history'),
+  ('function','track_application'), ('function','required_document_types'),
+  ('function','guarantor_is_required'), ('function','application_student_detail'),
+  ('index','one_identity_per_account'), ('index','repayments_reference_uniq'),
+  ('index','one_open_application_per_student'), ('index','applications_by_status')
 )
 select e.grp, e.name,
        case
@@ -325,3 +334,164 @@ order by role, status;
 select case when count(*) > 0 then 'PASS - at least one active super admin'
   else 'FAIL - no active super admin; nobody can assign roles or reverse payments' end as result
 from public.users where role = 'SUPER_ADMIN' and status = 'ACTIVE';
+
+
+-- -------------------------------------------------------------------------------------
+-- 14. Migration 014 — the application wizard.
+-- -------------------------------------------------------------------------------------
+select 'loan_policy has guarantor_required' as check, case
+    when exists (select 1 from pg_proc p
+                   join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = 'loan_policy'
+                    and p.prorettype = 'pg_catalog.record'::regtype
+                    and length(coalesce(p.proargnames::text, '')) > 0)
+    then 'PASS' else 'FAIL - 014 did not apply; loan_policy() is still the 011 version' end as result
+union all select 'track_application is callable by anon', case
+    when has_function_privilege('anon', 'public.track_application(text,text)', 'execute')
+    then 'PASS - the public tracking page can call it'
+    else 'FAIL - /track will be refused for signed-out visitors' end
+union all select 'application_student_detail is staff-only', case
+    when has_function_privilege('anon', 'public.application_student_detail(uuid)', 'execute') then
+      'FAIL - anon can read applicant details'
+    when has_function_privilege('authenticated', 'public.application_student_detail(uuid)', 'execute') then
+      'PASS - authenticated callers reach it; the role filter is inside the function'
+    else 'FAIL - nobody can call it; /admin/applications/:id will show no applicant' end
+union all select 'submit_loan_application returns 3 columns', case
+    when (select count(*) from information_schema.routines r
+           join pg_proc p on p.proname = r.routine_name
+          where r.specific_schema = 'public' and p.proname = 'submit_loan_application'
+            and r.data_type = 'record') >= 1
+    then 'PASS' else 'check by hand' end;
+
+-- 14a. The two settings 014 seeds are DEFAULTS, not decisions. Confirm them.
+select key, value,
+       case when key = 'guarantor_required' then
+         case when value = 'true' then 'every applicant must name a guarantor' else 'no guarantor needed' end
+       when key = 'required_application_documents' then
+         'students must upload: ' || value
+       end as meaning
+from public.app_settings
+where key in ('guarantor_required', 'required_application_documents');
+
+-- 14b. Applications that exist but were never confirmed under the wizard. 014 cannot infer this
+--      for them; each student must redo step 1, or the application must be closed deliberately.
+select id, application_number, status, user_id, created_at, 'NEEDS STUDENT CONFIRMATION' as action
+from public.loan_applications
+where student_confirmed_at is null and status <> 'DRAFT'
+order by created_at desc
+limit 50;
+
+-- 14c. Submitted applications still sitting in the old SUBMITTED state. The wizard submits
+--      straight to UNDER_REVIEW, so nothing new lands here; anything present is from before 014
+--      and needs migrating (the UPDATE is at the bottom of 014).
+select id, application_number, status, submitted_at
+from public.loan_applications
+where status = 'SUBMITTED'
+order by submitted_at desc;
+
+-- 14d. A submitted application MUST be in the history, and a draft MUST NOT be. A draft in the
+--      history means something reviewed it before the student submitted anything.
+select la.id, la.application_number, la.status,
+       (select count(*) from public.application_status_history h where h.application_id = la.id) as history_rows,
+       case
+         when la.status = 'DRAFT' and (select count(*) from public.application_status_history h
+                                         where h.application_id = la.id) > 0
+           then 'FAIL - a draft has status history'
+         when la.status <> 'DRAFT' and (select count(*) from public.application_status_history h
+                                         where h.application_id = la.id) = 0
+           then 'FAIL - a submitted application has no history'
+         else 'PASS'
+       end as result
+from public.loan_applications la
+where la.submitted_at is not null or la.status <> 'DRAFT'
+order by la.created_at desc
+limit 50;
+
+-- 14e. Application numbers must be unique and correctly formed. The column has a UNIQUE
+--      constraint, so a duplicate is impossible; this checks the FORMAT, because a number
+--      students are told to quote that does not match what the page accepts is a support call.
+select application_number,
+       case when application_number ~ '^OGS-[0-9]{4}-[0-9]{6}$' then 'PASS'
+            else 'legacy OGE- format from before 014' end as result
+from public.loan_applications
+where application_number is not null
+order by created_at desc
+limit 50;
+
+-- 14f. Programme and year of study are only populated if the register import carried them.
+--      Blank here is not a failure — it just means step 1 shows "—" for those two fields.
+select count(*) as total,
+       count(*) filter (where programme is not null)      as with_programme,
+       count(*) filter (where year_of_study is not null)  as with_year
+from public.rucu_students;
+
+-- 14g. The wizard saves steps 2 and 4 through SEPARATE functions. If only one exists, the other
+--      path is broken: the wizard will call whichever is missing and fail with "function does not
+--      exist" the first time a student presses Save and continue on that step.
+--
+--      Run this. Every row it returns is MISSING. An empty result set is the pass.
+select expected.name as missing_function, expected.note as used_for
+from (values
+  ('save_application_loan',       'step 2 — amount, purpose, term'),
+  ('save_application_financial',  'step 4 — income, expenses, support'),
+  ('save_application_contact',    'step 3 — phone, address'),
+  ('save_application_guarantor',  'step 5 — guarantor'),
+  ('attach_application_document', 'step 6 — upload'),
+  ('submit_loan_application',     'step 7 — submit'),
+  ('resubmit_application',        'dashboard — answer ACTION_REQUIRED'),
+  ('get_application_history',     'history timeline, both sides'),
+  ('track_application',           'the public /track page'),
+  ('application_student_detail',  'the applicant block on /admin/applications/:id')
+) as expected(name, note)
+where not exists (select 1 from pg_proc p
+                   join pg_namespace n on n.oid = p.pronamespace
+                  where n.nspname = 'public' and p.proname = expected.name);
+
+-- 14h. Every SUBMITTED application must be trackable by its owner on /track, which proves identity
+--      with the phone number on the account. submit_loan_application() refuses without one, so a row
+--      here means the application predates that check or the phone was cleared afterwards.
+select la.id, la.application_number, la.status, sp.phone,
+       'NOT TRACKABLE BY THE STUDENT' as action
+from public.loan_applications la
+join public.student_profiles sp on sp.user_id = la.user_id
+where la.submitted_at is not null
+  and length(regexp_replace(coalesce(sp.phone, ''), '[^0-9]', '', 'g')) < 9
+order by la.submitted_at desc
+limit 50;
+
+-- 14i. Two students must never hold two open applications, and the partial unique index is what
+--      guarantees it. This finds the situation the index exists to make impossible.
+select user_id, count(*) as open_applications, array_agg(status order by created_at) as statuses
+from public.loan_applications
+where status in ('DRAFT','SUBMITTED','UNDER_REVIEW','ACTION_REQUIRED')
+group by user_id
+having count(*) > 1;
+
+-- -------------------------------------------------------------------------------------
+-- 15. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
+--     does. Follow this before a real student is let near it.
+--
+--   1. Sign up with a NEW email. You should land straight on the dashboard, with no "confirm
+--      your email" step. If you see that step, email confirmation is still on — see README,
+--      "Turning off email confirmation".
+--   2. APPLY FOR LOAN -> Step 1. Enter a registration number and last name that DO exist in
+--      rucu_students. You should see the student found, read-only.
+--   3. Enter a registration number and last name that do NOT match. You should get "Student
+--      record not found" and NO new row anywhere.
+--   4. Fill steps 2-6, then step 7. Submission must be refused until the declaration is ticked.
+--   5. Submit. You should get OGS-YYYY-NNNNNN and status UNDER REVIEW. Double-click Submit:
+--      the second attempt must be refused, not create a second number.
+--   6. Sign in as a LOAN_OFFICER. /admin/applications must list it, /admin/applications/<id> must
+--      open, and each attached document must OPEN. If the document will not open, the storage
+--      policy from 014 section 18 did not apply.
+--   7. Set it to ACTION_REQUIRED with a note. Sign back in as the student: the note must be
+--      visible, and "I've provided what was asked" must move it back to UNDER REVIEW.
+--   8. Open /track in a signed-out browser, entering the application number plus the phone
+--      number on the account. Then repeat with a WRONG phone number: it must return nothing.
+--      Neither answer may show the amount, the full name or the registration number.
+--   9. Sign in as a student and try to open another student's application id directly. It must
+--      not load.
+--  10. Confirm /admin/settings shows guarantor_required and required_application_documents, and
+--      that changing guarantor_required to false immediately stops the guarantor step blocking
+--      submission.
+-- -------------------------------------------------------------------------------------

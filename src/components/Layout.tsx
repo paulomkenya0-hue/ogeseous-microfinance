@@ -28,6 +28,7 @@ const links: [string, string][] = [
   ['/about', 'About'],
   ['/how-it-works', 'How It Works'],
   ['/register', 'Apply'],
+  ['/track', 'Track Application'],
   ['/contact', 'Contact'],
 ]
 
@@ -48,7 +49,7 @@ export default function Layout() {
    * signed-in users whose role had not loaded yet to /admin — and ProtectedRoute then bounced
    * them straight back. Send them nowhere useful until the role is actually known.
    */
-  const home = !session ? '/login' : role === 'STUDENT' ? '/student/dashboard' : role ? '/admin' : '/'
+  const home = !session ? '/login' : role === 'STUDENT' ? '/dashboard' : role ? '/admin' : '/'
 
   const signOutAndGo = async () => {
     await signOut()

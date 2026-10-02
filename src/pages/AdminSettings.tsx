@@ -14,6 +14,7 @@ import {
   dateTime,
 } from '../components/ui'
 import { ROLE_LABELS, STAFF_ROLES, universityName } from '../config/site'
+import { APP_DOC_TYPES } from '../lib/application'
 
 type Setting = { key: string; value: string; updated_at: string; updated_by: string | null }
 type Staff = {
@@ -39,7 +40,7 @@ type Field = {
   key: string
   label: string
   hint?: string
-  kind: 'money' | 'int' | 'rate' | 'months' | 'text'
+  kind: 'money' | 'int' | 'rate' | 'months' | 'text' | 'bool' | 'docs'
 }
 
 const MONEY_FIELDS: Field[] = [
@@ -81,9 +82,47 @@ const CONTACT_FIELDS: Field[] = [
   { key: 'institution_address', label: 'Institution address', kind: 'text' },
 ]
 
+/**
+ * The two rules the application wizard asks about on every run.
+ *
+ * They are settings rather than constants because they are policy, not engineering: OGESEOUS
+ * decides whether a guarantor is needed and which documents a student must attach. Both are read by
+ * the database at submission time, so changing them here changes what the server accepts — there is
+ * no second copy in the frontend to fall out of step.
+ *
+ * TODO(OGESEOUS): the values below are the defaults migration 014 installed, chosen to be the
+ * stricter of the plausible options. Neither has been confirmed by OGESEOUS. Turning
+ * `guarantor_required` off does not stop a student filling one in; it only stops the wizard
+ * refusing to submit without one.
+ */
+const APPLICATION_FIELDS: Field[] = [
+  {
+    key: 'guarantor_required',
+    label: 'Guarantor required',
+    hint: 'true or false. When false, step 5 becomes optional and the wizard will submit without a guarantor.',
+    kind: 'bool',
+  },
+  {
+    key: 'required_application_documents',
+    label: 'Required application documents',
+    hint: `Comma separated, from ${APP_DOC_TYPES.join(', ')}. Leave empty to require nothing. Cleared here means no document can block submission.`,
+    kind: 'docs',
+  },
+]
+
 function validate(field: Field, raw: string): string | null {
   const v = raw.trim()
   if (field.kind === 'text') return v.length > 200 ? 'Keep this under 200 characters.' : null
+  if (field.kind === 'bool')
+    return /^(true|false)$/i.test(v) ? null : 'Enter true or false.'
+  if (field.kind === 'docs') {
+    if (v === '') return null
+    const parts = v.split(',').map((p) => p.trim().toUpperCase())
+    if (parts.some((p) => !(APP_DOC_TYPES as readonly string[]).includes(p)))
+      return `Only these are accepted: ${APP_DOC_TYPES.join(', ')}.`
+    if (new Set(parts).size !== parts.length) return 'The same document is listed twice.'
+    return null
+  }
   if (v === '') return 'Required.'
   if (field.kind === 'months') {
     const parts = v.split(',').map((p) => p.trim())
@@ -241,7 +280,7 @@ export default function AdminSettings() {
             {f.label}
             <input
               className="input mt-1"
-              inputMode={f.kind === 'text' ? undefined : 'decimal'}
+              inputMode={f.kind === 'text' || f.kind === 'docs' || f.kind === 'bool' ? undefined : 'decimal'}
               value={draft[f.key] ?? ''}
               disabled={!canEdit}
               onChange={(e) => setDraft((p) => ({ ...p, [f.key]: e.target.value }))}
@@ -284,6 +323,17 @@ export default function AdminSettings() {
               is a commercial and legal decision — including, in Tanzania, whether and how the
               institution is permitted to charge it, and on which convention. Confirm both before
               leaving a non-zero rate here.
+            </p>
+          </Card>
+
+          <Card title="Application rules" hint="What the wizard asks for, and what the database will refuse to accept without.">
+            {grouped(APPLICATION_FIELDS)}
+            <p className="mt-4 rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+              TODO(OGESEOUS): these two defaults were chosen to be the stricter of the plausible
+              options, not confirmed by anyone. Confirm the guarantor rule and the document list
+              before the institution opens to students — a required document that is impossible to
+              obtain will stop applications at the last step, and a guarantor rule that is wrong
+              will reject students who never had any way to know.
             </p>
           </Card>
 

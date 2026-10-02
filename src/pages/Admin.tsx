@@ -11,6 +11,7 @@ const AdminDashboard = lazy(() => import('./AdminDashboard'))
 const AdminStudents = lazy(() => import('./AdminStudents'))
 const AdminMarketing = lazy(() => import('./AdminMarketing'))
 const AdminLoanApplications = lazy(() => import('./AdminLoanApplications'))
+const AdminApplicationDetail = lazy(() => import('./AdminApplicationDetail'))
 const AdminLoans = lazy(() => import('./AdminLoans'))
 const AdminRepayments = lazy(() => import('./AdminRepayments'))
 const AdminCollections = lazy(() => import('./AdminCollections'))
@@ -99,6 +100,10 @@ export default function AdminShell() {
               <Route index element={<AdminDashboard />} />
               <Route path="students" element={allowed('Students') ? <AdminStudents /> : <Navigate to="/admin" replace />} />
               <Route path="applications" element={allowed('Applications') ? <AdminLoanApplications /> : <Navigate to="/admin" replace />} />
+              {/* One application, in full, with its documents and its history. Same role gate as the
+                  list: reviewing applications is LOAN_OFFICER and up, and the detail page reads
+                  loan_documents and the documents in storage, both of which carry that same gate. */}
+              <Route path="applications/:id" element={allowed('Applications') ? <AdminApplicationDetail /> : <Navigate to="/admin" replace />} />
               <Route path="loan-applications" element={<Navigate to="/admin/applications" replace />} />
               <Route path="loans" element={allowed('Loans') ? <AdminLoans /> : <Navigate to="/admin" replace />} />
               <Route path="repayments" element={allowed('Repayments') ? <AdminRepayments /> : <Navigate to="/admin" replace />} />
