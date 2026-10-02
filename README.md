@@ -1,92 +1,175 @@
-# OGESEOUS MICROFINANCE — Step 1
+# OGESEOUS MICROFINANCE
+
 © Paulo Mkenya · Developed by Paulo Mkenya
 
-1. Create a Supabase project; run `supabase/migrations/001_foundation.sql` in the SQL editor.
-2. `cp .env.example .env` and fill URL + anon key (never the service key).
-3. `npm install && npm run dev`
-4. Register, then promote your first admin in SQL: `update public.users set role='SUPER_ADMIN' where email='you@example.com';`
-5. Edit `src/config/site.ts` for logo and contact details.
-Route guards are UX only; Row Level Security in the database is the real enforcement.
+Student loan management for university students in Iringa, Tanzania — verification, applications,
+disbursement, repayment schedules, collections and reporting.
 
-## Step 2 — Student Verification
-1. In the Supabase SQL editor, run `supabase/migrations/002_verification.sql` (after 001).
-2. This creates the private `verification-documents` storage bucket automatically — no manual bucket setup needed.
-3. As SUPER_ADMIN/MANAGER, go to `/admin/students` to import the RUCU register (CSV: form_four_index_number, registration_number, last_name, full_name) and to approve/reject submitted verifications.
-4. Students verify at `/student/dashboard` → "Start Verification" → `/student/verify`.
-   - RUCU: search the imported register by index number + (reg. number or last name), confirm the match.
-   - Mkwawa / Iringa University: manual entry, reviewed by staff.
-   - All: upload Form Four certificate, an additional ID document, and a passport photo (max 5MB each).
-5. All writes to verification data go through `submit_verification()` and `review_verification()` (SQL functions), not raw table access, so status can't be forged from the browser.
-6. Not built yet (Step 3+): loan application, PDF + QR generation, disbursement, repayments.
+---
 
-## Marketing Officer Referrals
-1. Run `supabase/migrations/003_marketing_referrals.sql` (after 001 and 002).
-2. As SUPER_ADMIN/MANAGER: `/admin/marketing` → "Add Marketing Officer" (name + university) generates a unique referral number, e.g. `OG-RUCU-A1B2C`. Give this number to the officer.
-3. Students are asked once, on their dashboard, "How did you hear about OGESEOUS?" — Fellow students / Google / Marketing Officer (+ referral number). The number is checked and resolved to the officer server-side (`submit_referral()`), so it can't be faked from the browser.
-4. `/admin/marketing` shows every officer's referral count, university and status — full visibility for admins.
-5. If a marketing officer is later given a login (`role = MARKETING_OFFICER`, linked via `marketing_officers.user_id`), `/admin/marketing` shows only *their own* referral count and code — enforced by `get_marketing_stats()`, not just hidden in the UI.
-6. When Step 3 (loan application) is built, the same "how did you hear about us" answer can be reused or re-asked there — the table isn't tied to any one screen.
+## Running it
 
-## Step 3 — Loan Application System (draft only)
-1. Run `supabase/migrations/004_loan_applications.sql` (after 001–003).
-2. Only students with `verification_status = 'VERIFIED'` can open `/student/apply`; others are redirected to Verification.
-3. The form has three sections: Personal Information (read-only, pulled from the verified profile), Loan Details (amount, purpose, repayment period — 6/12/18/24 months), and Review.
-4. "Save Draft" writes through `save_loan_application_draft()`, which re-checks verification server-side and only edits the application while it is still a `DRAFT`.
-5. The dashboard's "Loan application" card now shows "No loan application submitted yet" or "Draft saved — not yet submitted" based on real data.
-6. **Not built yet, on purpose:** the "Accept Terms & Submit Application" button is disabled — mandatory Terms & Conditions acceptance and final submission are Step 4. Admin review/assessment of applications is Step 7. PDF generation and QR codes are Steps 5–6.
+```bash
+npm install
+cp .env.example .env      # then fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+npm run dev
+```
 
-## Steps 4–12
-Run these migrations, in order, after 001–004: `005_submission_and_verification.sql`, `006_admin_review.sql`,
-`007_loans_and_repayments.sql`, `008_collections.sql`, `009_reports.sql`, `010_fixes.sql`.
-`010_fixes.sql` must be **last**, and it only re-defines functions — no tables or data are altered.
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # vitest
+npm run build       # tsc && vite build
+npm run verify      # typecheck + test + build
+```
 
-- **Step 4 — Submit:** `/student/apply` → Review & Submit → checkbox + "Accept Terms & Submit Application" calls
-  `submit_loan_application()`, which generates the application number and a private QR token.
-- **Step 5 — PDF:** `/student/application` shows the application and a "Download Application PDF" button
-  (client-side, via jsPDF) once submitted, with the QR code embedded.
-- **Step 6 — QR verification:** the QR encodes `/verify?app=...&token=...`. Anyone (no login needed) can also
-  open `/verify` (linked in the footer) and type the two values in by hand. Only exact number + token combinations
-  resolve — the application number alone reveals nothing.
-- **Step 7 — Admin review:** `/admin/loan-applications` (LOAN_OFFICER/MANAGER/SUPER_ADMIN) — Review / Approve / Reject.
-- **Step 8 — Disbursement:** `/admin/loans` (ACCOUNTANT/MANAGER/SUPER_ADMIN) — disburse approved applications,
-  see all loans and balances.
-- **Step 9 — Repayments:** `/admin/repayments` records payments against a loan; students see their own history
-  at `/student/loan`.
-- **Step 10 — Collections:** `/admin/collections` lists loans past their due date (disbursement + repayment
-  period) and lets staff log that a reminder was attempted. **No real SMS/email is sent** — nothing is configured
-  for that, consistent with the Step 1 contact form.
-- **Step 11 — Reports:** `/admin/reports` (ACCOUNTANT/MANAGER/SUPER_ADMIN) — student/application/loan totals and
-  an applications-by-university breakdown.
-- **Step 12 — Security & deployment:** see `SECURITY.md`. Nothing has been deployed or run from this environment
-  (no network access here) — that file is a checklist for whoever deploys it, not a completed deployment.
+Never put the Supabase **service role** key in `.env` or anywhere in `src/`. The anon key is designed
+to be public; the service key is not, and it bypasses every Row Level Security policy in the database.
 
-### Corrections in `010_fixes.sql` (run after 009)
-Re-defines three functions to close four defects. It never edits 002 or 007, so it is safe on a database that
-already has 001–009 applied.
+---
 
-1. **`submit_verification()` did not consult the RUCU register.** `p_rucu_student_id` was stored but never
-   validated, so a student could call the function directly with `method = 'RUCU_AUTO'` and any name. The register
-   is now the source of truth: the index number and registration number must match the row, and the stored full
-   name is taken *from the register*, never from the browser.
-2. **`submit_verification()` never wrote the student's university, registration number or Form Four index number**
-   to `student_profiles` — so `/student/application` and the PDF showed a blank University and Registration No.
-   for every student. They are populated now. **Students verified before this migration keep the blank values**
-   and must resubmit, or an admin must run the backfill query commented at the bottom of `010_fixes.sql`.
-3. **`disburse_loan()` had no upper bound** — any amount could be disbursed against an approved application,
-   including more than was applied for. It is now capped at the approved amount. Disbursing *less* is still allowed.
-4. **`record_repayment()` silently absorbed overpayment** via `greatest(balance - amount, 0)` while storing the
-   full amount in `repayments`, so `sum(repayments)` stopped reconciling with the loan balances. It also accepted
-   payments on CLOSED/DEFAULTED loans and read the balance without a lock, so two concurrent payments could
-   over-collect. Overpayment is now rejected, only ACTIVE loans accept payments, and the loan row is locked.
+## Database migrations
 
-This SQL has **not been executed** — no Postgres was available in this environment. It passed a structural check
-(dollar-quoting, plpgsql block and parenthesis balance) and nothing more. Run it against a staging project first,
-and confirm with the reconciliation query in `SECURITY.md` that `sum(repayments)` equals disbursed minus
-outstanding before any real money moves.
+Run these in the Supabase SQL editor, **in order**:
 
-### Known simplifications (stated plainly, not hidden)
-- Due dates are a single date per loan (disbursement + repayment period), not a real installment schedule.
-- No amortization/interest calculation was specified, so none is applied — amounts are simple principal/outstanding.
-- Reports are aggregate totals, not a charting library.
-- None of this has been run — install and test locally, and treat any AI-written financial-logic code as something
-  a human developer should review line-by-line before it handles real money.
+| # | File | What it does |
+|---|------|--------------|
+| 001 | `001_foundation.sql` | Tables, `is_admin()`, RLS, `audit_logs`, the column guard |
+| 002 | `002_verification.sql` | Verification requests, RUCU register, private storage bucket |
+| 003 | `003_marketing_referrals.sql` | Marketing officers and referral codes |
+| 004 | `004_loan_applications.sql` | Loan applications, drafts, terms acceptance |
+| 005 | `005_submission_and_verification.sql` | Submission, application numbers, QR tokens |
+| 006 | `006_admin_review.sql` | `review_loan_application()` |
+| 007 | `007_loans_and_repayments.sql` | Loans and repayments |
+| 008 | `008_collections.sql` | Arrears listing, reminders |
+| 009 | `009_reports.sql` | Dashboard and report figures |
+| 010 | `010_fixes.sql` | Four defects in the functions above (superseded in part by 011/013) |
+| 011 | `011_security_hardening.sql` | **The verification blocker, plus identity and storage hardening** |
+| 012 | `012_staff_administration.sql` | Staff roles, suspension, staff directory, account search |
+| 013 | `013_repayment_schedule.sql` | Installment schedules, reversals, recalculation |
+
+**011 must run before 012 and 013** — 012 and 013 depend on objects it creates.
+
+After applying all of them, run `supabase/verify_migrations.sql`. It checks that every expected
+object exists, that `sum(repayments)` reconciles with disbursed minus outstanding, and it lists any
+loans that still need a schedule (see the note below). Run it before any real money moves.
+
+### What 011 fixed
+
+Before 011, **no student could ever submit verification.** `submit_verification()` writes
+`verification_status` on the profile, and the `trg_profiles_guard` trigger raised *'Not allowed to
+change verification status'* for any non-admin. Inside a `security definer` function `auth.uid()`
+still returns the student's own id, so the trigger's `is_admin()` check was false for every student.
+The function was unusable; this was not a hardening gap, it was a dead feature.
+
+011 replaces the check with a transaction-local marker that the trusted functions set explicitly
+(`trusted_write()` / `in_trusted_write()`), rather than trying to detect the caller from session
+state. `current_user is not distinct from session_user` was tried first and does not work in
+Supabase, where `session_user` is `authenticator` and `current_user` is `postgres` inside a definer
+function.
+
+011 also adds:
+
+- a unique index on `(university, registration_number)` so one identity cannot hold two accounts. It
+  **refuses to run** if duplicates already exist and names them, rather than silently skipping;
+- a unique constraint on repayment references so one mobile-money reference cannot be recorded twice;
+- storage policies for MIME type, size and delete — previously the bucket checked only the folder;
+- a rate limit on RUCU register search.
+
+### What 013 changed about money
+
+`rebuild_loan_payments()` is now the only thing that moves money across a loan. Both recording and
+reversing a repayment call it, so the two paths cannot drift apart. Reversals are **soft**: the row
+is kept and marked with `reversed_at` / `reversal_reason`, never deleted, and every total excludes
+reversed rows.
+
+New functions: `recalculate_loan`, `reverse_repayment`, `void_disbursement`, `mark_loan_defaulted`,
+`get_loan_schedule`.
+
+> **013 does not backfill schedules** for loans that already exist. They keep working, but they have
+> no installments, so they do not appear in arrears figures derived from the schedule.
+> `verify_migrations.sql` section 12 lists them. Run the backfill noted there, or leave them — but
+> know which is which before reporting on arrears.
+
+### Interest is off, on purpose
+
+`annual_interest_rate` is `0` and `interest_convention` is `none`. **OGESEOUS has not confirmed a
+rate.** Setting one is a commercial and legal decision, not a configuration detail, so it lives in
+the `app_settings` table rather than in code, where nobody would notice it. Until it is decided,
+installments are equal shares of the principal.
+
+`interest_convention` accepts `none`, `flat`, or `reducing_balance`, so enabling interest later is a
+settings change and not a code change.
+
+---
+
+## First steps
+
+1. Promote the first admin once, in SQL:
+
+   ```sql
+   update public.users set role = 'SUPER_ADMIN' where email = 'you@example.com';
+   ```
+
+2. Every further staff account, and every role change, is done through **/admin/settings** (role
+   assignment is SUPER_ADMIN only, so a manager cannot mint a super admin).
+3. Confirm the business settings on the same page: loan minimum and maximum, permitted terms.
+4. Replace the placeholders in `src/config/site.ts` — logo, contact details.
+
+---
+
+## Routes
+
+Students are under `/student/*`, staff under `/admin/*`. Route guards are UX only: **Row Level
+Security in the database is the real enforcement**, and the admin navigation mirrors the policies so
+that a link a role cannot use is hidden rather than quietly rendering an empty table.
+
+| Route | Who |
+|-------|-----|
+| `/` `/about` `/how-it-works` `/contact` `/privacy` `/terms` | public |
+| `/verify` | public — application verification by number + code |
+| `/student/dashboard` `/student/verify` `/student/apply` `/student/application` `/student/loan` | verified students |
+| `/admin/dashboard` | all staff |
+| `/admin/students` `/admin/audit-log` `/admin/settings` | MANAGER, SUPER_ADMIN (staff panel: SUPER_ADMIN only) |
+| `/admin/applications` | LOAN_OFFICER, MANAGER, SUPER_ADMIN |
+| `/admin/loans` | LOAN_OFFICER, ACCOUNTANT, COLLECTION_OFFICER, MANAGER, SUPER_ADMIN |
+| `/admin/repayments` `/admin/collections` | ACCOUNTANT, COLLECTION_OFFICER, MANAGER, SUPER_ADMIN |
+| `/admin/reports` | ACCOUNTANT, MANAGER, SUPER_ADMIN |
+| `/admin/marketing` | MARKETING_OFFICER (own referrals only), MANAGER, SUPER_ADMIN |
+
+---
+
+## Deployment
+
+GitHub Actions (`.github/workflows/deploy.yml`) runs the tests, builds, and publishes to Pages on
+every push to `master`. Three settings have to agree:
+
+- **`VITE_BASE_PATH`** — set to `/ogeseous-microfinance/` for Pages. It becomes both Vite's `base`
+  (asset URLs) and React Router's `basename`. The default is `/`, which is right for Vercel, Netlify
+  or a domain root.
+- **`BASE`** in `public/404.html` — must match `VITE_BASE_PATH`. Pages has no rewrite rules, so it
+  serves `404.html` for every route path; that file hands the requested path back to the app via
+  `sessionStorage` and `src/main.tsx` restores it.
+- **`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`** — repository secrets.
+
+Also set the Supabase Auth Site URL and Redirect URLs to the real domain, or password reset links
+will not come back to the app. See `SECURITY.md`.
+
+---
+
+## Not built, and stated plainly rather than hidden
+
+- **No SMS or email is sent.** Collections reminders record that contact was *attempted*; the
+  reminder has no message behind it until a provider is configured. The contact form opens the
+  visitor's mail client if an address is published, and otherwise says plainly that nothing was
+  delivered.
+- **No logo, address, phone or opening hours are published.** The site shows "not yet published"
+  rather than a blank that looks like an oversight.
+- **Privacy Policy and Terms are draft summaries, not legal documents.** They describe what the code
+  actually does so there is something concrete to review, and say so at the top. OGESEOUS must write
+  and approve the real documents.
+- **The SQL in this repository has never been executed.** It passed a structural check (dollar
+  quoting, plpgsql block and parenthesis balance) and nothing more. Treat AI-written
+  financial-logic SQL as something a human developer must read line by line before it moves money.
+- **The frontend has unit tests for its pure logic** (password rules, error-message scrubbing, file
+  validation, deep-link restoration). It has no end-to-end tests, and nothing has been run against a
+  live Supabase project.

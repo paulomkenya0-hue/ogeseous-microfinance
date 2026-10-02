@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>OGESEOUS Microfinance</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      main { max-width: 30rem; padding: 2rem; text-align: center; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.5rem; }
+      p { margin: 0; color: #94a3b8; font-size: 0.9rem; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Opening OGESEOUS…</h1>
+      <p>Taking you to the page you asked for.</p>
+    </main>
+
+    <!--
+      GitHub Pages serves this file for any path it cannot find, which includes every in-app route
+      beyond the home page. There are no rewrite rules on a Pages site, so without this a student
+      who reloaded /student/loan, or followed a password reset link to /reset-password, would get a
+      dead 404 instead of the app.
+
+      The requested path is handed to the app in sessionStorage and restored by src/main.tsx before
+      React mounts.
+
+      This file is copied verbatim from public/ and is NOT processed by Vite, which is exactly why
+      it cannot be a copy of index.html: index.html references hashed asset filenames that change
+      on every build, and a copy would 404 the moment the next deployment landed.
+
+      BASE below must match VITE_BASE_PATH in .github/workflows/deploy.yml. It is the one place
+      that must be updated if the site moves off the /ogeseous-microfinance/ path.
+    -->
+    <script>
+      (function () {
+        try {
+          var BASE = '/ogeseous-microfinance/';
+          sessionStorage.setItem(
+            'ogeseous:redirect',
+            window.location.pathname + window.location.search + window.location.hash,
+          );
+          // replace, not assign: this bounce must not sit in the back-button history.
+          window.location.replace(BASE);
+        } catch (e) {
+          // Private-mode browsers can refuse sessionStorage. A plain load of the app is still
+          // far better than leaving the visitor on this page.
+          window.location.replace('/ogeseous-microfinance/');
+        }
+      })();
+    </script>
+  </body>
+</html>

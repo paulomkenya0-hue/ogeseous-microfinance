@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 010 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 013 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -18,8 +18,9 @@ with expected(grp, name) as (values
   ('table','rucu_students'), ('table','verification_requests'),
   ('table','marketing_officers'), ('table','referral_captures'),
   ('table','loan_applications'), ('table','loans'), ('table','repayments'),
-  ('table','collection_reminders'),
+  ('table','collection_reminders'), ('table','app_settings'), ('table','loan_installments'),
   ('function','handle_new_user'), ('function','guard_protected_columns'),
+  ('function','trusted_write'), ('function','in_trusted_write'),
   ('function','search_rucu_student'), ('function','submit_verification'),
   ('function','review_verification'), ('function','import_rucu_students'),
   ('function','create_marketing_officer'), ('function','submit_referral'),
@@ -29,12 +30,20 @@ with expected(grp, name) as (values
   ('function','review_loan_application'),
   ('function','disburse_loan'), ('function','record_repayment'),
   ('function','list_arrears'), ('function','log_reminder'),
-  ('function','get_dashboard_stats'), ('function','get_applications_by_university')
+  ('function','get_dashboard_stats'), ('function','get_applications_by_university'),
+  ('function','setting_num'), ('function','set_setting'), ('function','allowed_repayment_months'),
+  ('function','set_user_role'), ('function','set_user_status'), ('function','link_marketing_officer'),
+  ('function','list_staff'), ('function','find_user'), ('function','list_audit_actions'),
+  ('function','build_loan_schedule'), ('function','rebuild_loan_payments'), ('function','recalculate_loan'),
+  ('function','reverse_repayment'), ('function','void_disbursement'), ('function','mark_loan_defaulted'),
+  ('function','get_loan_schedule'), ('function','delete_my_account'),
+  ('index','one_identity_per_account'), ('index','repayments_reference_uniq')
 )
 select e.grp, e.name,
        case
          when e.grp = 'table' and to_regclass('public.'||e.name) is null then 'FAIL missing'
          when e.grp = 'function' and to_regprocedure('public.'||e.name) is null then 'FAIL missing'
+         when e.grp = 'index' and to_regclass('public.'||e.name) is null then 'FAIL missing'
          else 'PASS'
        end as result
 from expected e
@@ -83,24 +92,94 @@ where id = 'verification-documents';
 
 -- -------------------------------------------------------------------------------------
 -- 5. THE IMPORTANT ONE — does the money arithmetic reconcile?
---    Every shilling disbursed must equal repayments + what is still outstanding.
---    If this fails, the reports on /admin/reports are showing wrong numbers.
+--
+--    Migration 013 replaced the single-due-date model with a real schedule, so the test changed.
+--    For every loan, all three of these must be true:
+--      (a) sum(installments.amount_due)   == principal + interest billed for that loan
+--      (b) sum(installments.amount_paid)   == sum of that loan's non-reversed repayments
+--      (c) loans.outstanding_balance       == sum(amount_due - amount_paid) over that loan
+--    If (b) or (c) fails, /admin/reports and every collections figure are showing wrong numbers.
+--
+--    Any FAIL can be repaired without touching data by hand:
+--       select public.recalculate_loan('<loan_id>');
+--    That recomputes the schedule from the repayments table, which is the record of what
+--    actually happened. Run it for each failing loan, then re-run this check.
+-- -------------------------------------------------------------------------------------
+with per_loan as (
+  select l.id, l.principal_amount, l.outstanding_balance, l.status,
+    coalesce((select sum(i.amount_due)   from public.loan_installments i where i.loan_id = l.id), 0) as scheduled,
+    coalesce((select sum(i.amount_paid)   from public.loan_installments i where i.loan_id = l.id), 0) as allocated,
+    coalesce((select sum(r.amount) from public.repayments r
+              where r.loan_id = l.id and r.reversed_at is null), 0) as received
+  from public.loans l
+)
+select
+  count(*) filter (where allocated <> received)                                        as paid_mismatch,
+  count(*) filter (where outstanding_balance <> scheduled - allocated)                 as balance_mismatch,
+  count(*) filter (where status = 'CLOSED' and allocated <> scheduled)                 as closed_but_unpaid,
+  count(*) filter (where status = 'ACTIVE' and allocated = scheduled)                 as paid_but_still_active,
+  count(*) filter (where scheduled = 0)                                                as loans_with_no_schedule,
+  count(*)                                                        as total_loans,
+  case
+    when count(*) filter (where allocated <> received) = 0
+     and count(*) filter (where outstanding_balance <> scheduled - allocated) = 0
+     and count(*) filter (where status = 'CLOSED' and allocated <> scheduled) = 0
+     and count(*) filter (where status = 'ACTIVE' and allocated = scheduled) = 0
+     and count(*) filter (where scheduled = 0) = 0
+    then 'PASS - money reconciles'
+    else 'FAIL - run recalculate_loan() for each row listed by the queries below'
+  end as result
+from per_loan;
+
+-- The individual offenders behind the counts above. Should return no rows.
+with per_loan as (
+  select l.id, l.principal_amount, l.outstanding_balance, l.status,
+    coalesce((select sum(i.amount_due)   from public.loan_installments i where i.loan_id = l.id), 0) as scheduled,
+    coalesce((select sum(i.amount_paid)   from public.loan_installments i where i.loan_id = l.id), 0) as allocated,
+    coalesce((select sum(r.amount) from public.repayments r
+              where r.loan_id = l.id and r.reversed_at is null), 0) as received
+  from public.loans l
+)
+select id, principal_amount, scheduled, received, allocated, outstanding_balance, status,
+       case
+         when scheduled = 0 then 'no schedule generated'
+         when allocated <> received then 'installments <> repayments'
+         when outstanding_balance <> scheduled - allocated then 'balance <> schedule'
+         else 'ok'
+       end as problem
+from per_loan
+where scheduled = 0
+   or allocated <> received
+   or outstanding_balance <> scheduled - allocated
+   or (status = 'CLOSED' and allocated <> scheduled)
+   or (status = 'ACTIVE' and allocated = scheduled)
+limit 50;
+
+
+-- -------------------------------------------------------------------------------------
+-- 5b. Portfolio-level check, independent of the per-loan detail above.
 -- -------------------------------------------------------------------------------------
 select
-  coalesce(sum(l.principal_amount), 0)                            as total_disbursed,
-  coalesce((select sum(r.amount) from public.repayments r), 0)   as total_repayments,
-  coalesce(sum(l.outstanding_balance), 0)                        as total_outstanding,
-  coalesce(sum(l.principal_amount), 0)
-    - coalesce((select sum(r.amount) from public.repayments r), 0)
-    - coalesce(sum(l.outstanding_balance), 0)                    as difference,
+  coalesce((select sum(principal_amount) from public.loans), 0)                 as total_disbursed,
+  coalesce((select sum(amount) from public.repayments where reversed_at is null), 0) as total_collected,
+  coalesce((select sum(outstanding_balance) from public.loans), 0)              as total_outstanding,
+  coalesce((select sum(principal_amount) from public.loans), 0)
+    - coalesce((select sum(amount) from public.repayments where reversed_at is null), 0)
+    - coalesce((select sum(outstanding_balance) from public.loans), 0)          as difference,
   case
-    when coalesce(sum(l.principal_amount), 0)
-       - coalesce((select sum(r.amount) from public.repayments r), 0)
-       - coalesce(sum(l.outstanding_balance), 0) = 0
-    then 'PASS - money reconciles'
+    when coalesce((select sum(principal_amount) from public.loans), 0)
+       - coalesce((select sum(amount) from public.repayments where reversed_at is null), 0)
+       - coalesce((select sum(outstanding_balance) from public.loans), 0) = 0
+    then 'PASS - disbursed <> repayments + outstanding'
     else 'FAIL - disbursed <> repayments + outstanding'
-  end as result
-from public.loans l;
+  end as result;
+
+-- Reversed repayments must be excluded from every total. This shows what they were, for review.
+select r.id, r.loan_id, r.amount, r.method, r.reference, r.reversed_at, r.reversed_by, r.reversal_reason
+from public.repayments r
+where r.reversed_at is not null
+order by r.reversed_at desc
+limit 50;
 
 
 -- -------------------------------------------------------------------------------------
@@ -145,3 +224,104 @@ group by action
 order by times desc;
 -- Every sensitive action should be represented here once staff start using the app.
 -- An absence of rows just means nothing has been approved or disbursed yet.
+
+
+-- -------------------------------------------------------------------------------------
+-- 9. Did migration 011 land? These are the fixes that were silent security holes.
+-- -------------------------------------------------------------------------------------
+select 'one_identity_per_account' as check, case when to_regclass('public.one_identity_per_account') is not null
+    then 'PASS - one account per (university, registration)' else 'FAIL - missing, duplicate accounts are possible' end as result
+union all select 'repayments_reference_uniq', case when to_regclass('public.repayments_reference_uniq') is not null
+    then 'PASS - a payment reference cannot be reused' else 'FAIL - missing, a payment can be recorded twice' end
+union all select 'app_settings', case when to_regclass('public.app_settings') is not null
+    then 'PASS - loan limits are configured, not hard-coded' else 'FAIL - missing' end
+union all select 'trusted_write', case when to_regproc('public.trusted_write') is not null
+    then 'PASS - submit_verification() can pass the guard' else 'FAIL - submit_verification() is broken' end;
+
+-- MUST be empty. If it is not, migration 011 refused to run; see its remediation query.
+select university, registration_number, count(*) as accounts
+from public.student_profiles
+where university is not null and registration_number is not null
+group by university, registration_number
+having count(*) > 1;
+
+-- Confirm the guard really does block a student from self-editing a verified identity.
+-- Run as a STUDENT in the SQL editor (auth.uid() is then that student). All three MUST raise:
+--   update public.student_profiles set full_name = 'Someone Else' where user_id = auth.uid();
+--   update public.student_profiles set university = 'MKWAWA' where user_id = auth.uid();
+--   update public.student_profiles set registration_number = 'FORGED' where user_id = auth.uid();
+-- Expected: 'Not allowed to change verified identity details...'
+-- Also confirm the legitimate path still works — as the student:
+--   update public.student_profiles set phone = '+255700000000' where user_id = auth.uid();
+-- Expected: succeeds.
+
+
+-- -------------------------------------------------------------------------------------
+-- 10. Business settings. These are DEFAULTS, not confirmed values. Review every one.
+-- -------------------------------------------------------------------------------------
+select key, value, updated_at, updated_by
+from public.app_settings
+order by key;
+
+select
+  case when (select value from public.app_settings where key = 'annual_interest_rate')::numeric = 0
+    then 'interest is OFF — every installment equals the principal split'
+    else 'WARNING - interest is on at ' || (select value from public.app_settings where key = 'annual_interest_rate')
+         || ' using the ' || (select value from public.app_settings where key = 'interest_convention')
+         || ' convention. Confirm this is a decision OGESEOUS and its compliance position have made.' end as interest_note,
+  case when (select value from public.app_settings where key = 'max_loan_amount')::numeric > 0
+    then 'loan ceiling is enforced' else 'FAIL - max_loan_amount is 0, no ceiling is applied' end as ceiling_note;
+
+
+-- -------------------------------------------------------------------------------------
+-- 11. The schedule generated at disbursement. Spot-check the due dates are monthly and that
+--     the term sums to what is expected — this is what arrears is now calculated from.
+-- -------------------------------------------------------------------------------------
+select l.id, l.principal_amount, la.repayment_period_months,
+  count(i.id) as installments,
+  min(i.due_date) as first_due, max(i.due_date) as last_due,
+  sum(i.amount_due) as total_scheduled,
+  l.principal_amount - sum(i.amount_due) as interest_component,
+  case
+    when count(i.id) = la.repayment_period_months then 'PASS'
+    else 'FAIL - installment count <> agreed term'
+  end as result
+from public.loans l
+join public.loan_applications la on la.id = l.application_id
+left join public.loan_installments i on i.loan_id = l.id
+group by l.id, l.principal_amount, la.repayment_period_months
+having count(i.id) <> la.repayment_period_months
+order by l.created_at desc
+limit 50;
+
+
+-- -------------------------------------------------------------------------------------
+-- 12. Loans from BEFORE migration 013 have no schedule. 013 does not backfill, because a
+--     schedule can only be invented for a loan with no payments against it, and guessing the
+--     term for a loan that is already being collected against would be wrong.
+--
+--     List them here, then handle each one deliberately: either void the disbursement and
+--     re-disburse so a schedule is generated, or agree a schedule with the student and call
+--         select public.build_loan_schedule('<loan_id>');
+--     ...which is refused if the loan has payments against it. Settle or reverse those first.
+-- -------------------------------------------------------------------------------------
+select l.id, l.principal_amount, l.status, l.disbursed_at,
+  (select count(*) from public.repayments r where r.loan_id = l.id and r.reversed_at is null) as repayments,
+  'NEEDS A SCHEDULE' as action
+from public.loans l
+where not exists (select 1 from public.loan_installments i where i.loan_id = l.id)
+order by l.disbursed_at desc;
+
+-- -------------------------------------------------------------------------------------
+-- 13. Sanity check on staff administration. There must be at least one active SUPER_ADMIN, or
+--     nobody can assign roles and the system cannot be administered.
+-- -------------------------------------------------------------------------------------
+select role, status, count(*) as accounts
+from public.users
+where role <> 'STUDENT'
+group by role, status
+order by role, status;
+
+select case when count(*) > 0 then 'PASS - at least one active super admin'
+  else 'FAIL - no active super admin; nobody can assign roles or reverse payments' end as result
+from public.users where role = 'SUPER_ADMIN' and status = 'ACTIVE';
