@@ -22,6 +22,46 @@ describe('describeError', () => {
     const msg = 'Reference "MPESA12345" is already recorded against a repayment.'
     expect(describeError(new Error(msg))).toBe(msg)
   })
+
+  it('reads .message off a Supabase error object instead of printing [object Object]', () => {
+    // The shape PostgREST actually returns. It has no prototype, so `instanceof Error` is false
+    // and the previous String(e) fallback printed the literal text "[object Object]".
+    const postgrest = {
+      message: 'You already have an application with OGESEOUS.',
+      code: 'P0001',
+      details: null,
+      hint: null,
+    }
+    expect(describeError(postgrest)).toBe('You already have an application with OGESEOUS.')
+    expect(describeError(postgrest)).not.toBe('[object Object]')
+  })
+
+  it('handles the auth client error shape as well', () => {
+    expect(describeError({ message: 'Invalid login credentials', status: 400 })).toBe(
+      'Invalid login credentials',
+    )
+  })
+
+  it('still strips driver noise from a Supabase error object', () => {
+    expect(describeError({ message: 'Postgres Error: duplicate key (SQLSTATE 23505)' })).toBe(
+      'duplicate key',
+    )
+  })
+
+  it('falls back to a nested error string when there is no message', () => {
+    expect(describeError({ error: 'Network request failed' })).toBe('Network request failed')
+  })
+
+  it('shows an object with no message at all rather than [object Object]', () => {
+    // Hiding it would be worse: an unrecognised error shape must still be diagnosable.
+    const out = describeError({ weird: true, count: 3 })
+    expect(out).not.toBe('[object Object]')
+    expect(out).toContain('weird')
+  })
+
+  it('never returns an empty string for an empty object', () => {
+    expect(describeError({})).toBe('Something went wrong. Please try again.')
+  })
 })
 
 describe('pageRange', () => {

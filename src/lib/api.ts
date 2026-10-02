@@ -49,16 +49,52 @@ export async function rpcOne<T>(fn: string, args?: Record<string, unknown>): Pro
  * Postgres messages are written to be read by whoever caused them, which is the right person for
  * a duplicate-reference warning but not for a student looking at a loan form. This keeps the
  * message and drops the driver noise around it.
+ *
+ * A Supabase error is NOT an Error. `supabase.rpc()`, `supabase.from()` and the auth client all
+ * resolve with `{ error }` where error is a plain object — PostgREST's
+ * `{ message, code, details, hint }`, or Auth's `{ message, status }`. It has no prototype, so
+ * `instanceof Error` is false and `String(e)` on it produces the literal text "[object Object]".
+ * That is what a student saw on the "other university" branch of step 1, and it hid the real
+ * message — which in this case was the server refusing the request, not the form being valid.
+ *
+ * So: read `.message` off anything that has one, before falling back to string conversion. An
+ * object with no usable message is serialised rather than dropped, because an error message the
+ * caller cannot see is worse than an ugly one.
  */
 export function describeError(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e ?? '')
-  const cleaned = raw
+  const message =
+    e instanceof Error
+      ? e.message
+      : typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string'
+        ? (e as { message: string }).message
+        : // Supabase's GoTrue client nests the text under `error` for some paths.
+          typeof e === 'object' && e !== null && typeof (e as { error?: unknown }).error === 'string'
+          ? (e as { error: string }).error
+          : null
+
+  const cleaned = (message ?? (typeof e === 'string' ? e : null) ?? safeJson(e))
     .replace(/^Postgres Error:\s*/i, '')
     .replace(/^Error:\s*/i, '')
     .replace(/\s*\(SQLSTATE [A-Z0-9]+\)\s*$/i, '')
     .replace(/\s*\(code:\s*[A-Z0-9]+\)\s*$/i, '')
     .trim()
+
   return cleaned || 'Something went wrong. Please try again.'
+}
+
+/** Last resort for an object with no message, so an unusual error is never shown as [object Object]. */
+function safeJson(e: unknown): string {
+  if (e === null || e === undefined) return ''
+  if (typeof e !== 'object') return String(e)
+  try {
+    const json = JSON.stringify(e)
+    // '{}' and '[]' carry no information. Returning an empty string here lets the caller fall back
+    // to the generic message — falling back to String(e) here would put "[object Object]" straight
+    // back into the UI, which is the thing being fixed.
+    return !json || json === '{}' || json === '[]' ? '' : json
+  } catch {
+    return 'An error occurred'
+  }
 }
 
 /** Inclusive row range for a page of results, for use with `.range()`. */

@@ -47,6 +47,7 @@ Run these in the Supabase SQL editor, **in order**:
 | 012 | `012_staff_administration.sql` | Staff roles, suspension, staff directory, account search |
 | 013 | `013_repayment_schedule.sql` | Installment schedules, reversals, recalculation |
 | 014 | `014_application_wizard.sql` | **The seven-step application wizard: RUCU lookup, loan documents, application numbers, public tracking** |
+| 015 | `015_register_lookup_fix.sql` | **Corrects two functions in 014 whose OUT parameter shadowed a column they read, which made the RUCU lookup raise on every call** |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 

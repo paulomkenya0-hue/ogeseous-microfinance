@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 014 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 015 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 14 migrations' objects exist?
+-- 1. Do all 15 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -468,7 +468,62 @@ group by user_id
 having count(*) > 1;
 
 -- -------------------------------------------------------------------------------------
--- 15. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
+-- 15. THE RUCU LOOKUP (migration 015).
+--
+-- This is the check that would have caught the "NO STUDENT FOUND" bug. It calls the function
+-- exactly as a signed-in student does, so a PL/pgSQL error inside it surfaces here instead of in
+-- front of somebody trying to apply for a loan.
+--
+-- Run these as a STUDENT (set role / auth.uid()), because the function refuses anyone else.
+--
+-- 15a. MUST return exactly one row, with the authoritative values from rucu_students.
+--      An error here means 015 did not apply. ZERO rows means the register genuinely has no
+--      match — which is a data problem, not a code one, and is answered by 15c.
+-- -------------------------------------------------------------------------------------
+select public.verify_student_from_register('RU/TEST/001/2024', 'MWAKYUSA');
+-- Expected: one row -> rucu_student_id set, full_name = 'JOHN MWAKYUSA',
+--           registration_number = 'RU/TEST/001/2024', programme not null, year_of_study not null.
+
+-- 15b. The same lookup, deliberately wrong in each way. Both MUST return zero rows, and neither
+--      may create a register row or an application.
+select 'wrong surname' as case, count(*) as rows_returned
+from public.verify_student_from_register('RU/TEST/001/2024', 'NOSUCHNAME')
+union all
+select 'wrong registration', count(*)
+from public.verify_student_from_register('RU/TEST/999/2024', 'MWAKYUSA')
+union all
+select 'correct registration, lower-cased surname', count(*)
+from public.verify_student_from_register('RU/TEST/001/2024', 'mwakyusa');
+-- Expected: 0, 0, 1 — the comparison is case-insensitive, the inputs are not.
+
+-- 15c. Surrounding whitespace must not defeat the match. Expected: 1.
+select count(*) as rows_returned
+from public.verify_student_from_register('  RU/TEST/001/2024  ', '  MWAKYUSA  ');
+
+-- 15d. A failed lookup must not have created anything. Expected: exactly the one pre-existing row.
+select count(*) as register_rows from public.rucu_students where registration_number = 'RU/TEST/001/2024';
+
+-- 15e. Static regression check on the two functions that had the defect. Each declares an OUT
+--      parameter whose name is also a column it reads, so the bare form is ambiguous and Postgres
+--      raises "column reference X is ambiguous" instead of matching. Both must now use the
+--      qualified form. Expected: one row per function, both PASS.
+--      (15a proves it behaviourally; this catches the bare form being reintroduced in review.)
+select p.proname,
+       case
+         when p.proname = 'verify_student_from_register'
+              and p.prosrc like '%r.registration_number%'
+              and p.prosrc like '%r.last_name%'                     then 'PASS'
+         when p.proname = 'attach_application_document'
+              and p.prosrc like '%d.storage_path%'                   then 'PASS'
+         else 'FAIL - unqualified column reference reintroduced'
+       end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('verify_student_from_register', 'attach_application_document');
+
+-- -------------------------------------------------------------------------------------
+-- 16. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
 --     does. Follow this before a real student is let near it.
 --
 --   1. Sign up with a NEW email. You should land straight on the dashboard, with no "confirm

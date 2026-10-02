@@ -341,11 +341,21 @@ begin
   end if;
   insert into public.audit_logs (actor_id, action, entity) values (auth.uid(), 'RUCU_WIZARD_MATCH', 'rucu_students');
 
-  select * into v_row from public.rucu_students
-   where lower(registration_number) = lower(trim(p_registration))
-     and lower(last_name) = lower(trim(p_last_name))
+  -- Every column is qualified with the table alias, and that is load-bearing rather than style.
+  --
+  -- This function declares `registration_number` as an OUT parameter, and `rucu_students` also has
+  -- a column of that name. In PL/pgSQL an unqualified name that is both a variable and a column of a
+  -- table in the same statement is ambiguous, and with the default variable_conflict = error
+  -- Postgres raises `column reference "registration_number" is ambiguous` instead of matching.
+  -- The result was a lookup that could never succeed: the function failed on every call, for every
+  -- registration number in the register, valid or not.
+  select r.* into v_row from public.rucu_students r
+   where lower(r.registration_number) = lower(trim(p_registration))
+     and lower(r.last_name) = lower(trim(p_last_name))
    limit 1;
-  if v_row.id is null then return; end if;   -- zero rows: the UI shows "record not found"
+  -- Zero rows is "no match", and only "no match". It never creates a record and it never marks
+  -- anything approved.
+  if v_row.id is null then return; end if;
 
   -- One identity, one account. Caught here rather than as a unique-violation, because the message
   -- a student gets decides whether they sign in or ask for help.
@@ -728,8 +738,11 @@ begin
        and (storage.foldername(o.name))[1] = auth.uid()::text
   ) then raise exception 'That upload could not be found in your account. Please upload it again.'; end if;
 
-  select storage_path into v_old from public.loan_documents
-   where application_id = p_application_id and doc_type = p_doc_type;
+  -- Qualified for the same reason as verify_student_from_register(): `storage_path` is declared as an
+  -- OUT parameter here and is also a column of loan_documents, so the bare name was ambiguous and
+  -- raised instead of reading the superseded path.
+  select d.storage_path into v_old from public.loan_documents d
+   where d.application_id = p_application_id and d.doc_type = p_doc_type;
 
   insert into public.loan_documents (application_id, doc_type, storage_path)
   values (p_application_id, p_doc_type, trim(p_path))

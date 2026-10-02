@@ -466,20 +466,35 @@ export default function LoanWizard() {
       if (reg.trim().length < 3) return setErr({ reg: 'Enter your registration number' })
       if (lastName.trim().length < 2) return setErr({ lastName: 'Enter your last name' })
       setBusy('lookup')
-      const rows = await rpc<{
+
+      // try/catch, NOT .catch(() => []).
+      //
+      // The `.catch` that returned an empty array set the real message and then carried on, so the
+      // very next line saw zero rows and overwrote it with "Student record not found". Every
+      // failure therefore looked like a failed lookup: a permission refusal, an inactive account,
+      // an expired session and a genuinely absent register row all produced the same sentence. The
+      // student was told to check their typing when the server had refused the request, and the
+      // actual cause was thrown away — which is why this bug was hard to diagnose.
+      //
+      // "Record not found" is a real answer from the database and only a real answer. Anything else
+      // reports what the database actually said.
+      type RegisterMatch = {
         rucu_student_id: string
         full_name: string
         registration_number: string
         programme: string | null
         year_of_study: string | null
-      }>('verify_student_from_register', {
-        p_registration: reg.trim(),
-        p_last_name: lastName.trim(),
-      }).catch((e) => {
+      }
+      let rows: RegisterMatch[]
+      try {
+        rows = await rpc<RegisterMatch>('verify_student_from_register', {
+          p_registration: reg.trim(),
+          p_last_name: lastName.trim(),
+        })
+      } catch (e) {
         setBusy(null)
-        setErr({ form: describeError(e) })
-        return [] as { rucu_student_id: string; full_name: string; registration_number: string; programme: string | null; year_of_study: string | null }[]
-      })
+        return setErr({ form: describeError(e) })
+      }
       setBusy(null)
 
       // Zero rows is the documented "no match". It must never be turned into a record, and the
