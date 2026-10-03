@@ -433,6 +433,15 @@ begin
     raise exception 'Only active student accounts can apply for a loan';
   end if;
   if p_university not in ('RUCU','MKWAWA','IU') then raise exception 'Please choose your university'; end if;
+  -- RUCU may not be declared. RUCU students are verified against public.rucu_students by
+  -- verify_student_from_register, and this function is the one that writes student_profiles.
+  -- Without this check a student could call it directly, claim university = 'RUCU' with a name and
+  -- registration number of their own choosing, and have the application recorded as SELF_DECLARED
+  -- while the register was never consulted. Declaring RUCU details is a self-verification path and
+  -- this is the only place that can close it.
+  if p_university = 'RUCU' then
+    raise exception 'Ruaha Catholic University students are checked against the RUCU register. Use the register lookup rather than entering your details yourself.';
+  end if;
   if length(v_name) < 3 then raise exception 'Enter your full name as it appears on your registration'; end if;
   if length(trim(coalesce(p_registration, ''))) < 3 then raise exception 'Enter your registration number'; end if;
   if length(trim(coalesce(p_form_four_index, ''))) < 3 then raise exception 'Enter your Form Four Index Number'; end if;

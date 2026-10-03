@@ -80,11 +80,29 @@ environment this was written in. It is a checklist and an account of what the co
 1. **Make the repository private.** The TODO at the top of this file.
 2. **Environment variables** — set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and
    `VITE_BASE_PATH` in your hosting provider's dashboard or repository secrets.
-3. **Supabase Auth settings** — **untick email confirmation** (Authentication → Providers → Email),
-   set a minimum password policy that matches the app's own rule (10 characters, mixed case and a
-   digit), and set the Site URL and Redirect URLs to the real domain. Password reset links depend on
-   the last two. Email confirmation cannot be disabled from code, and leaving it on means every new
-   student lands on a "your account was created" page they cannot use yet.
+3. **Supabase Auth settings — students register with a phone number and a four-digit PIN** (016).
+   Four values, all project settings that no code in this repository can change:
+
+   - **Authentication → Providers → Phone → Phone provider: ON.** Without it `signUp({ phone })`
+     fails and *no student can register at all*.
+   - **Authentication → Providers → Phone → Confirm phone: OFF.** Otherwise sign-up returns no
+     session and nobody reaches the dashboard after registering.
+   - **Authentication → Sign In / Providers → Email → Minimum password length: 4.** GoTrue rejects a
+     shorter password before this app's own rule is consulted.
+   - **Authentication → Providers → Email → Confirm email: OFF.** This no longer affects students,
+     who have no email address. It still holds back a *staff* sign-up.
+
+   Also set the Site URL and Redirect URLs to the real domain — email password reset depends on it.
+
+   **The credential itself, stated once.** A four-digit PIN has ten thousand possibilities, and a
+   student account is identified by a phone number rather than an email address, which means the
+   number is the only secret an attacker has to guess alongside it. Anyone who knows a student's
+   number can walk that space quickly, and no email confirmation or lockout stands in the way. This
+   is the policy the business specified and it is implemented as specified; it is recorded here
+   because the alternative — leaving the app enforcing a stronger rule than the account server —
+   produces a product that looks secure and is not. If that risk is not acceptable, the change that
+   reverses it is `strongPw` in `src/lib/validate.ts` **and** the Minimum password length setting;
+   the app-side rule alone is not enough, and it is not a boundary.
 4. **Confirm the business settings in /admin/settings.** The loan minimum, maximum and permitted
    terms ship as **unconfirmed defaults**, and the maximum is not a number anyone has agreed to. Set
    them before a student can see them on the application form. Migration 014 adds two more that are

@@ -48,6 +48,8 @@ Run these in the Supabase SQL editor, **in order**:
 | 013 | `013_repayment_schedule.sql` | Installment schedules, reversals, recalculation |
 | 014 | `014_application_wizard.sql` | **The seven-step application wizard: RUCU lookup, loan documents, application numbers, public tracking** |
 | 015 | `015_register_lookup_fix.sql` | **Corrects two functions in 014 whose OUT parameter shadowed a column they read, which made the RUCU lookup raise on every call** |
+| 016 | `016_phone_signup.sql` | **Students register with a phone number and no email address. Makes `users.email` nullable and teaches the signup trigger about `auth.users.phone`** |
+| 017 | `017_no_rucu_self_declaration.sql` | **Closes a self-verification path: `declare_application_student` now refuses `RUCU`, so RUCU details can only come from the register** |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
@@ -56,18 +58,50 @@ object exists, that `sum(repayments)` reconciles with disbursed minus outstandin
 `track_application` is callable by `anon` and nothing else is, and it lists any loans that still
 need a schedule (see the note below). Run it before any real money moves.
 
-### Turning off email confirmation — you have to do this by hand
+### Students register with a phone number and a PIN — three Supabase settings you must change by hand
 
-**Email confirmation is a Supabase project setting, not something this code can switch off.** No
-amount of editing `src/` will stop it, and any instruction that says otherwise is wrong.
+**Supabase Auth cannot create a password account with neither an email address nor a phone number.**
+One of the two has to be the account identifier. Students are now created against the **phone
+number** (`signUp({ phone, password })`), so the signup form asks for a full name, a phone number
+and a four-digit PIN and nothing else. Staff are unaffected: they keep signing in with their email
+address, exactly as before, and the sign-in page tells them apart by whether what they typed
+contains an `@`.
 
-Go to **Supabase → Authentication → Providers → Email → Confirm email** and untick it. Then a new
-account receives a session immediately and the sign-up page's `[ Go to Dashboard ]` button works on
-the first click.
+These are project settings. No amount of editing `src/` will change any of them.
 
-Until you do, the app does the next best thing: the account is genuinely created, and the sign-up page
-says so, and names the exact setting that is still in the way instead of telling the student to go
-and check their inbox for a message the office has no way to resend.
+| # | Where | What |
+|---|---|---|
+| 1 | **Authentication → Providers → Phone** | Turn the **Phone** provider **ON**. Without it `signUp({ phone })` fails with "Phone logins are not enabled" and **no student can register at all**. |
+| 2 | **Authentication → Providers → Phone** | **Untick "Confirm phone".** With it on, sign-up returns no session, so nobody lands on the dashboard after registering. |
+| 3 | **Authentication → Sign In / Providers → Email → Minimum password length** | Set it to **4**. GoTrue rejects a shorter password *before* this app's own rule is consulted, so a four-digit PIN fails at the API while the form says it is acceptable. |
+
+Until settings 1 and 2 are done the signup form says so by name and gives the exact path, instead of
+leaving a student on a page telling them their account exists but will not open.
+
+**Why 016 is needed and not just the form.** `public.users.email` was declared `text not null` in
+001. A student with no email has `auth.users.email = NULL`, so the `handle_new_user()` trigger's
+insert would fail on the not-null constraint and **no student account could ever be created**. 016
+drops that constraint — keeping the unique index, so two staff addresses still cannot collide — and
+rewrites the trigger to read `auth.users.phone`, which is the column GoTrue actually keeps unique.
+Role stays `STUDENT` and status stays `ACTIVE`; no existing account is touched.
+
+**Password reset.** There is no self-service reset for a student, and the sign-in page says so
+rather than offering a button that does nothing. The Supabase client has no
+`resetPasswordForPhone`, and GoTrue has no password-reset-by-SMS endpoint the browser may call — a
+four-digit PIN on a phone-identified account is recoverable by an administrator and by nobody else.
+Staff still reset by email.
+
+> A four-digit PIN has ten thousand possibilities, and the account is identified by a phone number,
+> which is the only thing an attacker has to get right. Anyone who already knows the number can walk
+> that space quickly. This is the rule the business asked for and it is implemented as asked; it is
+> recorded in `016_phone_signup.sql` so the choice is visible to whoever reads the schema next.
+
+### Turning off email confirmation
+
+Students no longer sign up with an email address, so email confirmation no longer affects them at
+all. **Staff** accounts still use an email identity, and **Confirm email** under **Authentication →
+Providers → Email** will still hold back a staff sign-up. Untick it, and lower the **Minimum
+password length** to 4 as set out in the table above.
 
 ### What 011 fixed
 
@@ -192,7 +226,9 @@ that token, so an old receipt cannot be replayed against a new application state
    assignment is SUPER_ADMIN only, so a manager cannot mint a super admin).
 3. Confirm the business settings on the same page: loan minimum and maximum, permitted terms, and —
    new in 014 — **guarantor required** and **required application documents**.
-4. Turn off email confirmation in Supabase (see above).
+4. Apply the **three Supabase settings** in "Students register with a phone number and a PIN" above
+   — enable the Phone provider, untick Confirm phone, and set the minimum password length to 4.
+   Until all three are done, **no student can register at all**.
 5. Replace the placeholders in `src/config/site.ts` — logo, contact details.
 
 ---

@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 015 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 017 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 15 migrations' objects exist?
+-- 1. Do all 17 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -523,30 +523,155 @@ where n.nspname = 'public'
   and p.proname in ('verify_student_from_register', 'attach_application_document');
 
 -- -------------------------------------------------------------------------------------
--- 16. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
+-- 16. Phone-only signup (016). Students now have NO email address, so public.users.email is
+--     nullable and the signup trigger reads auth.users.phone. Read-only checks.
+-- -------------------------------------------------------------------------------------
+
+-- 16a. The signup trigger must exist and must read the phone identity. If it is still the 001
+--      version it only reads raw_user_meta_data, and public.users.phone stays empty for every
+--      student. Expected: one row, PASS.
+select case
+         when p.prosrc like '%new.phone%'                 then 'PASS'
+         else 'FAIL - handle_new_user does not read auth.users.phone'
+       end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'handle_new_user';
+
+-- 16b. The trigger must still fire on signup. A student account with no public.users row cannot
+--      sign in to the application at all. Expected: one row, PASS.
+select case
+         when count(*) = 1 then 'PASS'
+         else 'FAIL - on_auth_user_created missing or duplicated (' || count(*) || ')'
+       end as result
+from pg_trigger
+where tgrelid = 'auth.users'::regclass and tgname = 'on_auth_user_created' and not tgisinternal;
+
+-- 16c. Email is optional for students but still unique, so two staff accounts can never share an
+--      address. Expected: no_yes below reads 'no'.
+select 'users_email_is_nullable' as check,
+       case when (select is_nullable from information_schema.columns
+                   where table_schema = 'public' and table_name = 'users'
+                     and column_name = 'email') = 'YES'
+            then 'PASS' else 'FAIL - email is still NOT NULL; no phone-only signup can succeed'
+       end as result
+union all
+select 'users_email_still_unique',
+       case when (select count(*) from pg_constraint c
+                   join pg_class t on t.oid = c.conrelid
+                   where t.relname = 'users' and c.contype = 'u'
+                     and pg_get_constraintdef(c.oid) like '%email%') >= 1
+            then 'PASS' else 'FAIL - the unique constraint on email was lost'
+       end;
+
+-- 16d. No staff account may be left without an identity: staff sign in with their email address.
+--      Expected: zero rows.
+select 'staff_without_email' as problem, u.id, u.role
+from public.users u where u.email is null and u.role <> 'STUDENT';
+
+-- 16e. No placeholder email was invented from a phone number. Students are identified by phone;
+--      there should be no address in the database that is really a phone number. Expected: zero rows.
+select 'synthesised_email' as problem, u.id, u.email
+from public.users u
+where u.email ~ '^\+?[0-9]+@' or u.email like '%@phone%' or u.email like '%@student.invalid%';
+
+-- 16f. Students created BEFORE 016 kept the email they signed up with; that is expected, not a
+--      fault. Every student created AFTER 016 should have none. Read the counts: a rising
+--      "students_without_email" column means signup is working. Expected: the column to be > 0
+--      once new students have registered.
+select count(*) filter (where email is null)     as students_without_email,
+       count(*) filter (where email is not null) as students_with_email,
+       count(*) filter (where phone is null)     as students_without_phone
+from public.users where role = 'STUDENT';
+
+
+-- -------------------------------------------------------------------------------------
+-- 17. RUCU can no longer be self-declared (017). A student must not be able to write RUCU details
+--     into their own profile without the register being consulted.
+-- -------------------------------------------------------------------------------------
+
+-- 17a. The guard must be present in the function body. Read-only, so it is safe to run here.
+--      Expected: one row, PASS.
+select case
+         when p.prosrc like '%p_university = ''RUCU''%' then 'PASS'
+         else 'FAIL - declare_application_student still accepts RUCU; a student can self-verify'
+       end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'declare_application_student';
+
+-- 17b. MKWAWA and IU must STILL be declarable. If the guard was written too wide, students at
+--      those universities cannot apply at all, which is worse than the hole it closed. Behavioural
+--      check: run this as a signed-in STUDENT with a throwaway number, then delete the draft.
+--      Expected: an application id for each of MKWAWA and IU, and an error for RUCU.
+--
+--        select declare_application_student('RUCU',   'TEST NAME', 'T/R/001', 'T/IDX/001');
+--          -> error: Ruaha Catholic University students are checked against the RUCU register
+--        select declare_application_student('MKWAWA', 'TEST NAME', 'T/M/001', 'T/IDX/002');
+--          -> returns an application id
+--        select declare_application_student('IU',     'TEST NAME', 'T/I/001', 'T/IDX/003');
+--          -> returns an application id
+
+-- 17c. Students who claimed RUCU by self-declaration before this migration. These need a human
+--      decision from OGESEOUS; the migration deliberately does not touch existing rows.
+--      Expected: zero rows on a database that was never used that way.
+select 'declared_rucu' as problem, sp.user_id, sp.full_name, sp.registration_number, la.status
+from public.student_profiles sp
+left join public.loan_applications la on la.user_id = sp.user_id
+where sp.university = 'RUCU' and coalesce(la.verification_method, '') <> 'RUCU_REGISTER';
+
+-- 17d. Every legitimate RUCU student was matched against the register. A mismatch between the
+--      profile and public.rucu_students means something wrote those fields without the lookup.
+--      Expected: zero rows.
+select 'rucu_profile_disagrees_with_register' as problem, sp.user_id, sp.full_name,
+       sp.registration_number, r.full_name as register_name
+from public.student_profiles sp
+left join public.rucu_students r
+  on lower(trim(r.registration_number)) = lower(trim(sp.registration_number))
+ and lower(trim(r.last_name)) = lower(trim(sp.full_name))
+where sp.university = 'RUCU' and r.id is null;
+
+
+-- -------------------------------------------------------------------------------------
+-- 18. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
 --     does. Follow this before a real student is let near it.
 --
---   1. Sign up with a NEW email. You should land straight on the dashboard, with no "confirm
---      your email" step. If you see that step, email confirmation is still on — see README,
---      "Turning off email confirmation".
---   2. APPLY FOR LOAN -> Step 1. Enter a registration number and last name that DO exist in
---      rucu_students. You should see the student found, read-only.
---   3. Enter a registration number and last name that do NOT match. You should get "Student
---      record not found" and NO new row anywhere.
---   4. Fill steps 2-6, then step 7. Submission must be refused until the declaration is ticked.
---   5. Submit. You should get OGS-YYYY-NNNNNN and status UNDER REVIEW. Double-click Submit:
+--   1. Sign up with a NEW phone number, a name and a four-digit PIN (e.g. 1234). You should land
+--      straight on the dashboard, with no "confirm your phone" step and no email field at all.
+--      If you see a confirmation step, phone confirmation is still on — see README,
+--      "Turning off phone confirmation". If it refuses the PIN, Supabase's own minimum password
+--      length is still 6 — see the same README section.
+--   2. APPLY FOR LOAN -> Step 1. Choose Ruaha Catholic University, then a registration number and
+--      last name that DO exist in rucu_students (RU/TEST/001/2024 / MWAKYUSA). You should see
+--      the student found, read-only. No email address is asked for at any point.
+--   3. On the same step, choose Mkwawa University College or Iringa University. The register fields
+--      must disappear and your own details must be asked for instead. Nothing may appear that
+--      looks like a lookup.
+--   4. Back on RUCU, enter a registration number and last name that do NOT match. You should get
+--      "Student record not found. Please check your registration number and last name." and NO new
+--      row anywhere. You must not see [object Object] for any failure.
+--   5. Fill steps 2-6, then step 7. Submission must be refused until the declaration is ticked.
+--   6. Submit. You should get OGS-YYYY-NNNNNN and status UNDER REVIEW. Double-click Submit:
 --      the second attempt must be refused, not create a second number.
---   6. Sign in as a LOAN_OFFICER. /admin/applications must list it, /admin/applications/<id> must
---      open, and each attached document must OPEN. If the document will not open, the storage
---      policy from 014 section 18 did not apply.
---   7. Set it to ACTION_REQUIRED with a note. Sign back in as the student: the note must be
+--   7. Sign in as a LOAN_OFFICER with the EMAIL address. /admin/applications must list it,
+--      /admin/applications/<id> must open, and each attached document must OPEN. If the document
+--      will not open, the storage policy from 014 section 18 did not apply.
+--   8. Set it to ACTION_REQUIRED with a note. Sign back in as the student: the note must be
 --      visible, and "I've provided what was asked" must move it back to UNDER REVIEW.
---   8. Open /track in a signed-out browser, entering the application number plus the phone
+--   9. Open /track in a signed-out browser, entering the application number plus the phone
 --      number on the account. Then repeat with a WRONG phone number: it must return nothing.
 --      Neither answer may show the amount, the full name or the registration number.
---   9. Sign in as a student and try to open another student's application id directly. It must
---      not load.
 --  10. Confirm /admin/settings shows guarantor_required and required_application_documents, and
 --      that changing guarantor_required to false immediately stops the guarantor step blocking
 --      submission.
+--  11. Sign in as a student and try to open another student's application id directly. It must
+--      not load.
+--
+-- AND THE ONE THAT IS NO LONGER POSSIBLE:
+--  12. In the browser console, as a signed-in student, call the RPC by hand:
+--        await supabase.rpc('declare_application_student',
+--          { p_university: 'RUCU', p_full_name: 'ANYTHING', p_registration: 'ANYTHING',
+--            p_form_four_index: 'ANYTHING' })
+--      It must raise. Before migration 017 it returned an application id and wrote unverified RUCU
+--      details into the student's own profile.
 -- -------------------------------------------------------------------------------------

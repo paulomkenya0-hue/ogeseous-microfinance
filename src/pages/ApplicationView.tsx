@@ -108,7 +108,18 @@ export default function ApplicationView() {
             .from('loan_documents')
             .select('doc_type,storage_path,uploaded_at')
             .eq('application_id', row.id),
-          rpc<HistoryRow>('get_application_history', { p_id: row.id }).catch(() => [] as HistoryRow[]),
+          // No .catch(() => []) here.
+          //
+          // That fallback returned an empty array on failure, which is indistinguishable from an
+          // application that genuinely has no history — so a permission refusal, an expired session
+          // and a missing RPC all rendered as a blank timeline with no message at all. It is the
+          // same bug that made the RUCU lookup report "student not found" for every kind of
+          // failure. Letting it throw means the real message is shown instead.
+          //
+          // The application still renders: setApp() has already run above, so the catch falls
+          // through to the inline ErrorNote with a retry button rather than to the full-page
+          // failure, which is reserved for "no application at all".
+          rpc<HistoryRow>('get_application_history', { p_id: row.id }),
         ])
         if (d.error) throw new Error(d.error.message)
         setDocs((d.data ?? []) as DocRow[])

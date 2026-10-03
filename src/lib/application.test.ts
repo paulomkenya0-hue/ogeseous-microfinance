@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   contactStepDone,
+  DECLARABLE_UNIVERSITIES,
   documentsStepDone,
   financialStepDone,
   guarantorStepDone,
@@ -8,6 +9,7 @@ import {
   loanStepDone,
   maskInitials,
   missingDocuments,
+  needsRegisterLookup,
   nextStep,
   prevStep,
   PROGRESS_ITEMS,
@@ -46,15 +48,56 @@ const FULL: DraftFacts = {
 const REQUIRED = ['STUDENT_ID', 'NATIONAL_ID', 'GUARANTOR_ID']
 const OPTS = { guarantorRequired: true, requiredDocs: REQUIRED }
 
+describe('which step 1 branch a university selects', () => {
+  it('sends RUCU to the register lookup', () => {
+    // The only university OGESEOUS holds a register for.
+    expect(needsRegisterLookup('RUCU')).toBe(true)
+  })
+
+  it('lets the other universities be entered by the student', () => {
+    expect(needsRegisterLookup('MKWAWA')).toBe(false)
+    expect(needsRegisterLookup('IU')).toBe(false)
+    for (const u of DECLARABLE_UNIVERSITIES) expect(needsRegisterLookup(u)).toBe(false)
+  })
+
+  it('treats nothing chosen as no branch at all, not as a declaration', () => {
+    expect(needsRegisterLookup('')).toBe(false)
+    expect(needsRegisterLookup(null)).toBe(false)
+    expect(needsRegisterLookup(undefined)).toBe(false)
+  })
+
+  it('tolerates a value that arrives padded or in another case', () => {
+    // The value comes from a <select> and from a restored profile row, so it is not worth
+    // failing a student's application over whitespace or casing.
+    expect(needsRegisterLookup('rucu')).toBe(true)
+    expect(needsRegisterLookup(' RUCU ')).toBe(true)
+  })
+
+  it('does not offer RUCU as something a student may declare', () => {
+    // The specific hole this closes: RUCU used to be an option in the declaration dropdown, so a
+    // student could type their own name and registration number for an institution that does have a
+    // register. declare_application_student() now refuses it in the database as well.
+    expect(DECLARABLE_UNIVERSITIES).not.toContain('RUCU' as never)
+  })
+})
+
 describe('step navigation', () => {
   it('walks forward and back through seven steps and stops at both ends', () => {
     expect(WIZARD_STEPS).toHaveLength(7)
-    expect(nextStep('student')).toBe('loan')
+    expect(nextStep('student')).toBe('contact')
     expect(nextStep('review')).toBeNull()
     expect(prevStep('student')).toBeNull()
-    expect(prevStep('loan')).toBe('student')
+    expect(prevStep('contact')).toBe('student')
+    expect(prevStep('loan')).toBe('contact')
     // Back from review returns to documents, never past it.
     expect(prevStep('review')).toBe('documents')
+  })
+
+  it('asks for contact details before loan details', () => {
+    // The order the requirements set out: who and where you study, how we reach you, then what you
+    // want. The number collected on the contact step proves ownership on the public tracking page,
+    // so it is taken as soon as it can be rather than after an amount and a purpose.
+    expect(WIZARD_STEPS.indexOf('contact')).toBeLessThan(WIZARD_STEPS.indexOf('loan'))
   })
 
   it('numbers the steps from one, and never reports zero', () => {
@@ -65,8 +108,8 @@ describe('step navigation', () => {
   it('reads as the journey a student is told about, ending on Submitted', () => {
     expect(PROGRESS_ITEMS.map((s) => s.label)).toEqual([
       'Student',
-      'Loan Details',
       'Contact',
+      'Loan Details',
       'Financial',
       'Guarantor',
       'Documents',

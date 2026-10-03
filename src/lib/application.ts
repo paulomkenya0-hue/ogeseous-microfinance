@@ -23,6 +23,36 @@ export const APPLICATION_STATUSES = [
 
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
 
+// ---------------------------------------------------------------------------------------
+// Which university a student says they attend decides how step 1 behaves.
+//
+// Ruaha Catholic University is the only institution OGESEOUS holds a register for
+// (public.rucu_students). Its students are found by registration number and last name, and their
+// name, registration number, programme and year of study are then read-only because they come from
+// the register rather than from the keyboard.
+//
+// The other two have no register with OGESEOUS, so their students enter their own details and staff
+// confirm them during review. That is a weaker claim on purpose, and it is recorded as
+// SELF_DECLARED, which is why the confirmed panel words the two differently.
+//
+// RUCU is missing from DECLARABLE_UNIVERSITIES on purpose. It used to appear in the declaration
+// dropdown, which meant a student could claim to be an RUCU student and type their own name and
+// registration number — writing RUCU details into their profile with the register never consulted.
+// declare_application_student() refuses RUCU as well (migration 017), because a rule only a form can
+// break is not a rule.
+// ---------------------------------------------------------------------------------------
+export const DECLARABLE_UNIVERSITIES = ['MKWAWA', 'IU'] as const
+
+/**
+ * True when this university must go through the RUCU register lookup.
+ *
+ * Compared loosely and trimmed, because the value arrives from a <select> that a browser and a
+ * restored profile can both fill in inconsistently. RUCU is the only answer that is true; an empty
+ * value is false, and the wizard treats that as "nothing chosen yet" rather than as a branch.
+ */
+export const needsRegisterLookup = (university: string | null | undefined): boolean =>
+  (university ?? '').trim().toUpperCase() === 'RUCU'
+
 /**
  * NOT_APPLIED is deliberately absent from the list above, and that is not an oversight: it is not a
  * stored status, it is the absence of a row. Storing it would mean every student who had signed up
@@ -109,14 +139,19 @@ export const OPEN_STATUSES = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQU
 // ---------------------------------------------------------------------------------------
 // The wizard's shape.
 //
-// Seven steps and a submitted screen. Contact is its own step even though it was left out of the
-// original progress list, because the telephone number collected there is what proves ownership on
-// the public tracking page — dropping the step would break a feature rather than just save a click.
+// Seven steps and a submitted screen, in the order the requirements set out: who and where you
+// study, how we reach you, what you want, what you can afford, who backs you, the papers, and then
+// a review of everything.
+//
+// Contact sits second, before Loan Details, where it used to sit third. That is the only ordering
+// change and it is deliberate: the number collected on the contact step is what proves ownership on
+// the public tracking page, so it is asked for as soon as the student has given their name and
+// university rather than after they have already entered an amount and a purpose.
 // ---------------------------------------------------------------------------------------
 export const WIZARD_STEPS = [
   'student',
-  'loan',
   'contact',
+  'loan',
   'financial',
   'guarantor',
   'documents',
@@ -127,8 +162,8 @@ export type WizardStep = (typeof WIZARD_STEPS)[number]
 
 export const STEP_LABELS: Record<WizardStep, string> = {
   student: 'Student',
-  loan: 'Loan Details',
   contact: 'Contact',
+  loan: 'Loan Details',
   financial: 'Financial',
   guarantor: 'Guarantor',
   documents: 'Documents',

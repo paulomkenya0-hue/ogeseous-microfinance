@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import { describeError, rpc, rpcOne, tzs } from '../lib/api'
 import { Card, ErrorNote, ReadOnly, Row, Stepper, dateTime } from '../components/ui'
 import { hasErrors, type Errors } from '../lib/validate'
-import { universityName } from '../config/site'
+import { site, universityName } from '../config/site'
 import { discardOwnObjects, openDocument, uploadApplicationDocument } from '../lib/storage'
 import {
   APP_DOC_HINTS,
@@ -16,7 +16,9 @@ import {
   STEP_LABELS,
   WIZARD_STEPS,
   missingDocuments,
+  needsRegisterLookup,
   nextStep,
+  prevStep,
   purposeText,
   resumeStep,
   type AppDocType,
@@ -188,13 +190,28 @@ export default function LoanWizard() {
   // Step 1
   const [reg, setReg] = useState('')
   const [lastName, setLastName] = useState('')
-  const [mode, setMode] = useState<'register' | 'declared'>('register')
   const [declUni, setDeclUni] = useState('')
   const [declName, setDeclName] = useState('')
   const [declReg, setDeclReg] = useState('')
   const [declIndex, setDeclIndex] = useState('')
 
-  // Steps 2 and 4
+  /**
+   * Which branch step 1 is on is decided by the university, not by a separate switch.
+   *
+   * There used to be a two-button toggle above two sets of fields, and a university dropdown
+   * inside one of them that also listed RUCU. So a student could press "Other university", choose
+   * RUCU in that dropdown, and type their own name and registration number — writing RUCU
+   * details straight into their profile and marking the application SELF_DECLARED, with the
+   * register never consulted. One selector removes that path: choosing RUCU means the register
+   * lookup, choosing anything else means the declaration, and there is no way to be in the
+   * second branch while holding the first university's name.
+   *
+   * The database refuses it as well — declare_application_student rejects RUCU in migration 017 —
+   * because a rule only a form can break is not a rule.
+   */
+  const isRucu = needsRegisterLookup(declUni)
+
+  // Steps 3 and 4
   const [amount, setAmount] = useState('')
   const [purpose, setPurpose] = useState('')
   const [purposeOther, setPurposeOther] = useState('')
@@ -206,7 +223,7 @@ export default function LoanWizard() {
   const [supportAmount, setSupportAmount] = useState('')
   const [supportSource, setSupportSource] = useState('')
 
-  // Step 3
+  // Step 2 — Contact
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
   const [emName, setEmName] = useState('')
@@ -462,7 +479,9 @@ export default function LoanWizard() {
     setErr({})
     setRecheck(false)
 
-    if (mode === 'register') {
+    if (!declUni) return setErr({ declUni: 'Choose your university' })
+
+    if (isRucu) {
       if (reg.trim().length < 3) return setErr({ reg: 'Enter your registration number' })
       if (lastName.trim().length < 2) return setErr({ lastName: 'Enter your last name' })
       setBusy('lookup')
@@ -509,7 +528,6 @@ export default function LoanWizard() {
     }
 
     const e: Errors = {}
-    if (!declUni) e.declUni = 'Choose your university'
     if (declName.trim().length < 3) e.declName = 'Enter your full name as it appears on your registration'
     if (declReg.trim().length < 3) e.declReg = 'Enter your registration number'
     if (declIndex.trim().length < 3) e.declIndex = 'Enter your Form Four Index Number'
@@ -531,9 +549,9 @@ export default function LoanWizard() {
   }
 
   /**
-   * Step 2 and step 4 save through two separate database functions, not one.
+   * Step 3 and step 4 save through two separate database functions, not one.
    *
-   * That mirrors what the wizard actually asks for. Step 2 has never seen the income fields, and a
+   * That mirrors what the wizard actually asks for. Step 3 has never seen the income fields, and a
    * combined function would either refuse to save the amount because income is empty — telling the
    * student to fill in a step they have not reached — or silently ignore the missing arguments,
    * which makes it impossible to clear a field you previously filled in. Each function validates
@@ -591,7 +609,9 @@ export default function LoanWizard() {
     setDirty(false)
     setNote('Saved. Your phone number is what proves ownership on the public tracking page.')
     await load()
-    go('financial')
+    // Derived from WIZARD_STEPS rather than written out, so reordering the wizard cannot leave a
+    // step sending the student to the wrong next page.
+    go(nextStep('contact') ?? 'review')
   }
 
   const saveGuarantor = async () => {
@@ -679,7 +699,7 @@ export default function LoanWizard() {
     }
     if (!draft) return setErr({ form: 'Your application could not be found. Please reload and try again.' })
 
-    // Re-save the current values first. Without this a student who edited a figure on step 2 and
+    // Re-save the current values first. Without this a student who edited a figure on step 3 and
     // jumped straight to step 7 by clicking a completed step would submit the older numbers. Both
     // saves are attempted; a failure in one is reported, because submitting figures the student has
     // just corrected on screen but which the server never received would be worse than stopping.
@@ -879,7 +899,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
                 the register shows. If one of them is wrong, contact OGESEOUS.
               </p>
               <div className="mt-4 flex gap-2">
-                <button className="btn-primary" onClick={() => go('loan')}>
+                <button className="btn-primary" onClick={() => go(nextStep('student') ?? 'contact')}>
                   Continue
                 </button>
                 <button
@@ -897,28 +917,33 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             </>
           ) : (
             <>
-              <div className="mb-4 flex gap-2 text-sm">
-                <button
-                  type="button"
-                  className={mode === 'register' ? 'btn-blue' : 'btn-outline'}
-                  onClick={() => setMode('register')}
+              <Field label="University" error={err.declUni}>
+                <select
+                  className="input mt-1"
+                  value={declUni}
+                  onChange={(e) => { setDeclUni(e.target.value); setDirty(true); setErr({}) }}
                 >
-                  RUCU student — find my record
-                </button>
-                <button
-                  type="button"
-                  className={mode === 'declared' ? 'btn-blue' : 'btn-outline'}
-                  onClick={() => setMode('declared')}
-                >
-                  Other university
-                </button>
-              </div>
+                  <option value="">Select your university</option>
+                  {site.universities.map((u) => (
+                    <option key={u.code} value={u.code}>
+                      {u.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
 
-              {mode === 'register' ? (
+              {!declUni ? (
+                <p className="mt-4 text-sm text-slate-600">
+                  Choose your university above. Ruaha Catholic University students are found in the
+                  RUCU register; students of the other universities enter their details themselves.
+                </p>
+              ) : isRucu ? (
                 <div className="space-y-3">
                   <p className="text-sm text-slate-600">
-                    Both fields must match the register exactly. A shared surname on its own is not
-                    enough, and neither is a registration number on its own.
+                    Ruaha Catholic University students are checked against the RUCU register, so your
+                    details come from the register rather than from what you type. Both fields must
+                    match it exactly: a shared surname on its own is not enough, and neither is a
+                    registration number on its own.
                   </p>
                   <Field label="Registration Number" error={err.reg}>
                     <input className="input mt-1" value={reg} onChange={(e) => { setReg(e.target.value); setDirty(true) }} />
@@ -939,16 +964,9 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
                   <p className="text-sm text-slate-600">
                     Mkwawa University College and Iringa University have no register with OGESEOUS, so
                     you enter your own details here. Staff confirm them, together with your documents,
-                    while reviewing your application.
+                    while reviewing your application. Nothing you type on this page is treated as
+                    verified.
                   </p>
-                  <Field label="University" error={err.declUni}>
-                    <select className="input mt-1" value={declUni} onChange={(e) => setDeclUni(e.target.value)}>
-                      <option value="">Select your university</option>
-                      <option value="MKWAWA">Mkwawa University College</option>
-                      <option value="IU">Iringa University</option>
-                      <option value="RUCU">Ruaha Catholic University</option>
-                    </select>
-                  </Field>
                   <Field label="Full Name" error={err.declName}>
                     <input className="input mt-1" value={declName} onChange={(e) => { setDeclName(e.target.value); setDirty(true) }} />
                   </Field>
@@ -968,9 +986,9 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
         </Card>
       )}
 
-      {/* ---------------------------------------------------------------- step 2 */}
+      {/* ---------------------------------------------------------------- step 3 */}
       {step === 'loan' && (
-        <Card title="Step 2 — Loan Details">
+        <Card title="Step 3 — Loan Details">
           <div className="space-y-3">
             <Field
               label="Amount requested (TZS)"
@@ -1034,7 +1052,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             )}
 
             <StepNav
-              back={() => go('student')}
+              back={() => go(prevStep('loan') ?? 'student')}
               saveLabel="Save and continue"
               onSave={() => void saveStep()}
               busy={busy === 'loan'}
@@ -1044,10 +1062,10 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
         </Card>
       )}
 
-      {/* ---------------------------------------------------------------- step 3 */}
+      {/* ---------------------------------------------------------------- step 2 */}
       {step === 'contact' && (
         <Card
-          title="Step 3 — Contact"
+          title="Step 2 — Contact"
           hint="Already filled in from your account. Only change what is wrong."
         >
           <div className="space-y-3">
@@ -1087,7 +1105,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             </fieldset>
 
             <StepNav
-              back={() => go('loan')}
+              back={() => go(prevStep('contact') ?? 'student')}
               saveLabel="Save and continue"
               onSave={() => void saveContact()}
               busy={busy === 'contact'}
@@ -1158,7 +1176,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             )}
 
             <StepNav
-              back={() => go('contact')}
+              back={() => go(prevStep('financial') ?? 'student')}
               saveLabel="Save and continue"
               onSave={() => void saveStep()}
               busy={busy === 'financial'}
@@ -1195,7 +1213,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             </Field>
 
             <StepNav
-              back={() => go('financial')}
+              back={() => go(prevStep('guarantor') ?? 'student')}
               saveLabel="Save and continue"
               onSave={() => void saveGuarantor()}
               busy={busy === 'guarantor'}
@@ -1273,7 +1291,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
               short-lived link is created for that one look and then expires.
             </p>
             <StepNav
-              back={() => go('guarantor')}
+              back={() => go(prevStep('documents') ?? 'student')}
               saveLabel="Continue to review"
               onSave={() => {
                 const e = validate('documents')
@@ -1349,7 +1367,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2">
-              <button className="btn-outline" onClick={() => go('documents')} disabled={busy !== null}>
+              <button className="btn-outline" onClick={() => go(prevStep('review') ?? 'documents')} disabled={busy !== null}>
                 Back
               </button>
               <button className="btn-primary flex-1" disabled={busy !== null || !declared} onClick={() => void submit()}>

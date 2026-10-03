@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { supabase, configured } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
 import { describeError } from '../lib/api'
-import { isEmail, isPhone, strongPw, PW_HINT, hasErrors, type Errors } from '../lib/validate'
+import { isEmail, isPhone, toE164, strongPw, PW_HINT, hasErrors, type Errors } from '../lib/validate'
 
 const Box = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="mx-auto max-w-md px-4 py-12">
@@ -22,25 +22,29 @@ const Box = ({ title, children }: { title: string; children: ReactNode }) => (
 const Field = ({
   label,
   error,
+  hint,
   children,
 }: {
   label: string
   error?: string
+  hint?: string
   children: ReactNode
 }) => (
   <label className="block text-sm font-medium">
     {label}
     {children}
-    {error && (
+    {error ? (
       <span role="alert" className="text-xs text-red-600">
         {error}
       </span>
+    ) : (
+      hint && <span className="text-xs text-slate-500">{hint}</span>
     )}
   </label>
 )
 
 /**
- * One sign-in page for everybody.
+ * One sign-in page for everybody, and two different identifiers.
  *
  * There is deliberately no separate staff login. It cannot be a real security boundary — a second
  * form is still the same Supabase `signInWithPassword` against the same `auth.users` table, and
@@ -48,6 +52,11 @@ const Field = ({
  * `public.users.role`, read by RLS on every query and by the `area="admin"` guard, which reads the
  * same role the database does. The one thing the separate page used to buy was a clear signpost, and
  * a line of text below does that without implying a boundary that isn't there.
+ *
+ * The field is shared, but the identifier behind it is not. Students register against their PHONE
+ * NUMBER because the signup form no longer asks for an email address; staff sign in with the email
+ * address they were issued. `@` is what tells them apart, and it is also how the form behaves
+ * natively: typing an address gets an email keyboard, typing a number gets a numeric one.
  */
 export function Login() {
   const { session, role, loading } = useAuth()
@@ -58,6 +67,8 @@ export function Login() {
   const [err, setErr] = useState<Errors>({})
   const [busy, setBusy] = useState(false)
 
+  const isPhoneLogin = !id.includes('@')
+
   if (session && !loading && role) {
     return <Navigate to={role === 'STUDENT' ? '/dashboard' : '/admin'} replace />
   }
@@ -67,22 +78,36 @@ export function Login() {
     setMsg('')
     setErr({})
 
-    if (!id.includes('@')) {
-      return setErr({
-        id: 'Sign in with the email address you registered with.',
-      })
-    }
-    if (!isEmail(id) || !pw) {
-      return setErr({ ...(!isEmail(id) ? { id: 'Enter a valid email address' } : {}), ...(!pw ? { pw: 'Enter your password' } : {}) })
+    if (!id.trim()) return setErr({ id: 'Enter your phone number or email address.' })
+    if (!pw) return setErr({ pw: 'Enter your password.' })
+
+    // Both branches are fully validated before setBusy(true), not after. An early return from
+    // between setBusy(true) and the await would leave the button disabled for good, with no
+    // message about why and nothing to press.
+    let identifier: { phone: string } | { email: string }
+    if (isPhoneLogin) {
+      const phone = toE164(id)
+      if (!phone) {
+        return setErr({ id: 'Enter a valid phone number, for example 0754 123 456.' })
+      }
+      identifier = { phone }
+    } else {
+      if (!isEmail(id)) return setErr({ id: 'Enter a valid email address.' })
+      identifier = { email: id.trim() }
     }
 
     setBusy(true)
-    const { error } = await supabase.auth.signInWithPassword({ email: id.trim(), password: pw })
+    const result = await supabase.auth.signInWithPassword({ ...identifier, password: pw })
     setBusy(false)
 
-    if (error) {
-      // Deliberately vague: saying "no such email" would confirm which addresses have accounts.
-      setErr({ form: 'That email and password do not match an account.' })
+    if (result.error) {
+      // Deliberately vague: saying "no such account" would confirm which numbers or addresses are
+      // registered. It is the same message for a wrong password and an unknown identifier.
+      setErr({
+        form: isPhoneLogin
+          ? 'That phone number and password do not match an account.'
+          : 'That email and password do not match an account.',
+      })
       return
     }
     // Navigate on the auth event rather than guessing a role here — ProtectedRoute picks the
@@ -93,6 +118,23 @@ export function Login() {
   const forgot = async () => {
     setMsg('')
     setErr({})
+
+    if (isPhoneLogin) {
+      // There is genuinely no self-service reset here, and the app says so rather than pretending.
+      //
+      // Supabase ships resetPasswordForEmail and nothing equivalent for a phone identity: the
+      // auth-js client this project installs has no resetPasswordForPhone method at all, and GoTrue
+      // has no password-reset-by-SMS endpoint the browser is allowed to call. A four-digit PIN on
+      // an account identified by a phone number is therefore recoverable by an administrator and by
+      // nobody else. Calling a method that does not exist would have thrown on click and looked
+      // like a broken page.
+      return setMsg(
+        'Student accounts are identified by phone number, so there is no email address to send a ' +
+          'reset link to. If you have forgotten your PIN, contact the OGESEOUS office and they will ' +
+          'reset it for you.',
+      )
+    }
+
     if (!isEmail(id)) return setErr({ id: 'Enter your email address first.' })
     const { error } = await supabase.auth.resetPasswordForEmail(id.trim())
     if (error) return setErr({ form: describeError(error) })
@@ -102,10 +144,14 @@ export function Login() {
   return (
     <Box title="Sign in">
       <form onSubmit={submit} className="space-y-3" noValidate>
-        <Field label="Email address" error={err.id}>
+        <Field
+          label="Phone number or email address"
+          error={err.id}
+          hint={isPhoneLogin ? 'Students sign in with the number they registered.' : undefined}
+        >
           <input
             className="input mt-1"
-            type="email"
+            type={isPhoneLogin ? 'tel' : 'email'}
             value={id}
             onChange={(e) => setId(e.target.value)}
             autoComplete="username"
@@ -147,35 +193,43 @@ export function Login() {
 
       <p className="mt-4 border-t pt-3 text-xs text-slate-500">
         Students and OGESEOUS staff sign in here with the same form and go to different places. A
-        staff member lands on the admin console; a student lands on their dashboard. If a signed-in
-        person lands in the wrong one, they are simply sent to the other.
+        student signs in with their phone number; staff sign in with their email address. A staff
+        member lands on the admin console; a student lands on their dashboard. If a signed-in person
+        lands in the wrong one, they are simply sent to the other.
       </p>
     </Box>
   )
 }
 
 /**
- * Account creation.
+ * Account creation. Three things are asked for: a name, a phone number and a password.
  *
- * There is no "check your email to confirm the address" step, and there never should be in this
- * flow: OGESEOUS verifies a student against the RUCU register inside the application wizard, so an
- * unconfirmed email address proves nothing that the register has not already proved, while adding a
- * step most students cannot complete because the office has no way to resend a confirmation for an
- * address the student mistyped.
+ * There is no email address, and no "check your inbox to confirm" step. Neither can be fixed in
+ * this file alone, so it is worth being precise about why:
  *
- * Email confirmation is a Supabase *project setting*, not something this code can switch off. When
- * signUp returns no session it means the setting is still on, and saying so — by name, with the
- * path to it — is the difference between a student who knows what to tell the office and a support
- * ticket that starts with "it says my account was created but I cannot log in".
+ *   - Supabase Auth cannot create a password account with neither an email nor a phone; one of the
+ *     two must be the account identifier. Registering against the phone number is what removes the
+ *     email field without inventing a fake address for the student to remember.
  *
- * If the address is already registered, signInWithPassword is tried rather than a second account
- * being created: a student with two accounts has two profiles, and the one holding their
- * application is the one they will not find.
+ *   - Confirming a phone number instead of an email is the same problem in a different costume: it
+ *     puts an SMS code in front of every applicant, and the requirement is that a finished signup
+ *     lands straight on the dashboard. Both switches are project settings in Supabase, under
+ *     Authentication → Providers → Phone. If signUp returns no session, that is why, and the panel
+ *     afterwards names the exact setting and path rather than leaving the student stuck on a page
+ *     that says their account exists but will not let them in.
+ *
+ * The confirmation step was never worth much here in the first place: OGESEOUS checks who a student
+ * is against the RUCU register inside the application wizard, so a confirmed inbox proves nothing
+ * the register has not already proved.
+ *
+ * If the number is already registered, no second account is created — the student is told to sign in
+ * with the password they already have. A student with two accounts has two profiles, and the one
+ * holding their application is the one they will not find.
  */
 export function Register() {
   const { session, role, loading } = useAuth()
   const nav = useNavigate()
-  const [f, setF] = useState({ name: '', email: '', phone: '', pw: '', pw2: '' })
+  const [f, setF] = useState({ name: '', phone: '', pw: '', pw2: '' })
   const [err, setErr] = useState<Errors>({})
   const [done, setDone] = useState(false)
   const [needsConfirm, setNeedsConfirm] = useState(false)
@@ -192,31 +246,63 @@ export function Register() {
 
     const next: Errors = {}
     if (f.name.trim().length < 3) next.name = 'Enter your full name'
-    if (!isEmail(f.email)) next.email = 'Enter a valid email address'
-    if (!isPhone(f.phone)) next.phone = 'Enter a valid phone number'
+
+    // isPhone and toE164 are checked separately on purpose. isPhone only asks "is this a number",
+    // so the message can be about the number; toE164 then answers "can it be used as an account
+    // identifier", which is a different question and gets a different message.
+    const phone = toE164(f.phone)
+    if (!isPhone(f.phone)) next.phone = 'Enter a valid phone number, for example 0754 123 456.'
+    else if (!phone) next.phone = 'That number cannot be used to sign in. Enter it as a normal phone number, for example 0754 123 456.'
+
     if (!strongPw(f.pw)) next.pw = PW_HINT
     if (f.pw !== f.pw2) next.pw2 = 'Passwords do not match'
     setErr(next)
-    if (hasErrors(next)) return
+    if (hasErrors(next) || !phone) return
 
     setBusy(true)
-    // role is NOT sent. handle_new_user() in 001 inserts STUDENT unconditionally, so anything
-    // posted here is ignored by the database — which is the point.
+    // role is NOT sent. handle_new_user() (001, rewritten by 016) inserts STUDENT
+    // unconditionally, so anything posted here is ignored by the database — which is the point.
+    //
+    // The identifier is `phone`, not `email`. phone is passed again in the metadata because
+    // handle_new_user() reads the number from there as a fallback, and student_profiles is the
+    // table the application wizard reads contact details from.
     const { data, error } = await supabase.auth.signUp({
-      email: f.email.trim(),
+      phone,
       password: f.pw,
-      options: { data: { full_name: f.name.trim(), phone: f.phone.trim() } },
+      options: { data: { full_name: f.name.trim(), phone } },
     })
     setBusy(false)
 
     if (error) {
-      const already = /already (registered|been registered|exists|been used)/i.test(error.message)
+      if (/phone logins? (are|is) not enabled/i.test(error.message)) {
+        setErr({
+          form:
+            'Student signup is not switched on in this project yet. An administrator can enable it ' +
+            'in Supabase under Authentication → Providers → Phone by turning on the Phone provider.',
+        })
+        return
+      }
+      const already = /already (registered|been registered|exists|been used)|phone number .* already/i.test(
+        error.message,
+      )
       if (already) {
         setErr({
           form:
-            'An account already exists with that email address. Sign in with your existing password — ' +
+            'An account already exists with that phone number. Sign in with your existing password — ' +
             'do not create a second account, or your application and your documents will end up split ' +
             'between the two.',
+        })
+        return
+      }
+      // A four-digit password can be refused by Supabase itself before this app's own rule is ever
+      // consulted. Say that, rather than passing the raw minimum-length wording back to a student
+      // who was told four digits was enough.
+      if (/password should be at least|minimum password length/i.test(error.message)) {
+        setErr({
+          form:
+            'This project still enforces a longer password than the four digits you chose. An ' +
+            'administrator can lower it in Supabase under Authentication → Sign In / Providers → ' +
+            'Email, at "Minimum password length".',
         })
         return
       }
@@ -224,16 +310,22 @@ export function Register() {
       return
     }
 
-    // No session means the project still demands email confirmation. The account exists; the app
-    // just cannot hold it signed in yet.
-    setNeedsConfirm(!data?.session)
-    setDone(true)
+    // A session here means the student is already signed in, and the Navigate above carries them
+    // to their dashboard as soon as the role lookup settles — no page in between.
+    if (!data?.session) {
+      setNeedsConfirm(true)
+      setDone(true)
+      return
+    }
+    nav('/dashboard', { replace: true })
   }
 
   const field = (k: keyof typeof f, label: string, type = 'text', autoComplete?: string) => (
     <Field label={label} error={err[k]}>
       <input
         type={type}
+        inputMode={type === 'tel' ? 'tel' : type === 'password' ? 'numeric' : undefined}
+        pattern={type === 'password' ? '[0-9]*' : undefined}
         className="input mt-1"
         value={f[k]}
         onChange={(e) => setF({ ...f, [k]: e.target.value })}
@@ -253,14 +345,12 @@ export function Register() {
           <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="font-semibold">One setting is still switched on</p>
             <p className="mt-1">
-              Your account exists and your password works. OGESEOUS has not yet turned off email
+              Your account exists and your password works. OGESEOUS has not yet turned off phone
               confirmation for this project, so the app cannot sign you in automatically.
             </p>
             <p className="mt-2">
-              A manager can switch it off in Supabase under{' '}
-              <b>Authentication → Providers → Email</b>, by unticking <b>Confirm email</b>. Until then
-              use <b>Forgot password</b> on the sign-in page to set a password and confirm the address
-              in one step.
+              A manager can switch it off in Supabase under <b>Authentication → Providers → Phone</b>,
+              by unticking <b>Confirm phone</b>.
             </p>
           </div>
         )}
@@ -284,7 +374,6 @@ export function Register() {
       </p>
       <form onSubmit={submit} className="space-y-3" noValidate>
         {field('name', 'Full Name', 'text', 'name')}
-        {field('email', 'Email', 'email', 'email')}
         {field('phone', 'Phone Number', 'tel', 'tel')}
         {field('pw', 'Password', 'password', 'new-password')}
         <p className="-mt-2 text-xs text-slate-500">{PW_HINT}</p>
