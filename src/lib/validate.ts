@@ -54,7 +54,7 @@ export function toE164(v: string): string | null {
 }
 
 /**
- * The password rule: four or more digits.
+ * The password rule: exactly four digits (PIN).
  *
  * This replaced a 10-character mixed-case rule on explicit instruction. Note what that means here,
  * once, and then implement it as asked: a four-digit code has ten thousand possibilities, and with
@@ -66,9 +66,9 @@ export function toE164(v: string): string | null {
  * it for a specific account, and Supabase Auth's own minimum password length must be set to 4 as
  * well or it will reject 1234 before this code is ever reached.
  */
-export const strongPw = (v: string) => /^\d{4,}$/.test(v)
+export const strongPw = (v: string) => /^\d{4}$/.test(v)
 
-export const PW_HINT = 'At least 4 digits, numbers only'
+export const PW_HINT = '4 digits, numbers only'
 
 /** Shared shape for field-level validation errors. */
 export type Errors = Record<string, string>

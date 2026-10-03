@@ -11,15 +11,13 @@ import { isEmail, isPhone, toE164, strongPw, PW_HINT, hasErrors } from './valida
  * whether a student can get an account at all.
  */
 describe('strongPw', () => {
-  it('accepts the four-to-six digit codes the requirements named', () => {
+  it('accepts valid 4-digit PIN', () => {
     expect(strongPw('1234')).toBe(true)
     expect(strongPw('0987')).toBe(true)
     expect(strongPw('1122')).toBe(true)
-    expect(strongPw('12345')).toBe(true)
-    expect(strongPw('123456')).toBe(true)
   })
 
-  it('rejects fewer than four digits', () => {
+  it('rejects fewer than 4 digits', () => {
     expect(strongPw('123')).toBe(false)
     expect(strongPw('1')).toBe(false)
     expect(strongPw('')).toBe(false)
@@ -36,11 +34,11 @@ describe('strongPw', () => {
     expect(strongPw('Abcdefghij1')).toBe(false)
   })
 
-  it('accepts a long run of digits, including repeats', () => {
-    // Repeated digits were once rejected as obviously weak. The rule is a length and a character
-    // class, not a guess about how careful the student was: 1111 is a perfectly valid code under it.
-    expect(strongPw('111111111111')).toBe(true)
-    expect(strongPw('00000000')).toBe(true)
+  it('rejects more than 4 digits', () => {
+    // Exactly 4 digits required
+    expect(strongPw('111111111111')).toBe(false)
+    expect(strongPw('00000000')).toBe(false)
+    expect(strongPw('12345')).toBe(false)
   })
 
   it('has a hint that matches what it enforces', () => {

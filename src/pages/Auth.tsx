@@ -84,20 +84,46 @@ export function Login() {
     // Both branches are fully validated before setBusy(true), not after. An early return from
     // between setBusy(true) and the await would leave the button disabled for good, with no
     // message about why and nothing to press.
-    let identifier: { phone: string } | { email: string }
+    setBusy(true)
+    let emailToUse: string | null = null
+
     if (isPhoneLogin) {
       const phone = toE164(id)
       if (!phone) {
+        setBusy(false)
         return setErr({ id: 'Enter a valid phone number, for example 0754 123 456.' })
       }
-      identifier = { phone }
+      const { data: userData, error: lookupError } = await supabase
+        .from('users')
+        .select('email')
+        .eq('phone', phone)
+        .maybeSingle()
+      if (lookupError || !userData?.email) {
+        setBusy(false)
+        setErr({
+          form: 'That phone number and password do not match an account.',
+        })
+        return
+      }
+      emailToUse = userData.email
     } else {
-      if (!isEmail(id)) return setErr({ id: 'Enter a valid email address.' })
-      identifier = { email: id.trim() }
+      if (!isEmail(id)) {
+        setBusy(false)
+        return setErr({ id: 'Enter a valid email address.' })
+      }
+      emailToUse = id.trim()
     }
 
-    setBusy(true)
-    const result = await supabase.auth.signInWithPassword({ ...identifier, password: pw })
+    if (!emailToUse) {
+      setBusy(false)
+      setErr({
+        form: isPhoneLogin
+          ? 'That phone number and password do not match an account.'
+          : 'That email and password do not match an account.',
+      })
+      return
+    }
+    const result = await supabase.auth.signInWithPassword({ email: emailToUse, password: pw })
     setBusy(false)
 
     if (result.error) {
@@ -232,7 +258,7 @@ export function Register() {
   const [f, setF] = useState({ name: '', phone: '', pw: '', pw2: '' })
   const [err, setErr] = useState<Errors>({})
   const [done, setDone] = useState(false)
-  const [needsConfirm, setNeedsConfirm] = useState(false)
+  // const [needsConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
 
   if (session && !loading && role) {
@@ -242,7 +268,7 @@ export function Register() {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setErr({})
-    setNeedsConfirm(false)
+
 
     const next: Errors = {}
     if (f.name.trim().length < 3) next.name = 'Enter your full name'
@@ -251,11 +277,12 @@ export function Register() {
     // so the message can be about the number; toE164 then answers "can it be used as an account
     // identifier", which is a different question and gets a different message.
     const phone = toE164(f.phone)
-    if (!isPhone(f.phone)) next.phone = 'Enter a valid phone number, for example 0754 123 456.'
+    if (!f.phone.trim()) next.phone = 'Phone number is required'
+    else if (!isPhone(f.phone)) next.phone = 'Enter a valid phone number, for example 0754 123 456.'
     else if (!phone) next.phone = 'That number cannot be used to sign in. Enter it as a normal phone number, for example 0754 123 456.'
 
     if (!strongPw(f.pw)) next.pw = PW_HINT
-    if (f.pw !== f.pw2) next.pw2 = 'Passwords do not match'
+    if (f.pw !== f.pw2) next.pw2 = 'PINs do not match'
     setErr(next)
     if (hasErrors(next) || !phone) return
 
@@ -266,23 +293,19 @@ export function Register() {
     // The identifier is `phone`, not `email`. phone is passed again in the metadata because
     // handle_new_user() reads the number from there as a fallback, and student_profiles is the
     // table the application wizard reads contact details from.
+    // Generate synthetic email for auth (no SMS/phone auth)
+    const syntheticEmail = `phone_${phone.replace(/[^0-9+]/g, '').replace(/\+/g, 'plus')}@ogeseous.local`
+
     const { data, error } = await supabase.auth.signUp({
-      phone,
+      email: syntheticEmail,
       password: f.pw,
       options: { data: { full_name: f.name.trim(), phone } },
     })
     setBusy(false)
 
     if (error) {
-      if (/phone logins? (are|is) not enabled/i.test(error.message)) {
-        setErr({
-          form:
-            'Student signup is not switched on in this project yet. An administrator can enable it ' +
-            'in Supabase under Authentication → Providers → Phone by turning on the Phone provider.',
-        })
-        return
-      }
-      const already = /already (registered|been registered|exists|been used)|phone number .* already/i.test(
+      // No phone auth - don't show phone auth errors
+      const already = /already (registered|been registered|exists|been used)|phone number .* already|user already registered|email already/i.test(
         error.message,
       )
       if (already) {
@@ -294,15 +317,10 @@ export function Register() {
         })
         return
       }
-      // A four-digit password can be refused by Supabase itself before this app's own rule is ever
-      // consulted. Say that, rather than passing the raw minimum-length wording back to a student
-      // who was told four digits was enough.
-      if (/password should be at least|minimum password length/i.test(error.message)) {
+      if (/password should be at least|minimum password length|password.*short/i.test(error.message)) {
         setErr({
           form:
-            'This project still enforces a longer password than the four digits you chose. An ' +
-            'administrator can lower it in Supabase under Authentication → Sign In / Providers → ' +
-            'Email, at "Minimum password length".',
+            'Your PIN does not meet the minimum length requirement. Please enter exactly 4 digits.',
         })
         return
       }
@@ -313,7 +331,7 @@ export function Register() {
     // A session here means the student is already signed in, and the Navigate above carries them
     // to their dashboard as soon as the role lookup settles — no page in between.
     if (!data?.session) {
-      setNeedsConfirm(true)
+      // With email auth, no phone confirmation needed - try to sign in if possible
       setDone(true)
       return
     }
@@ -325,7 +343,8 @@ export function Register() {
       <input
         type={type}
         inputMode={type === 'tel' ? 'tel' : type === 'password' ? 'numeric' : undefined}
-        pattern={type === 'password' ? '[0-9]*' : undefined}
+        maxLength={type === 'password' ? 4 : undefined}
+        pattern={type === 'password' ? '[0-9]{4}' : undefined}
         className="input mt-1"
         value={f[k]}
         onChange={(e) => setF({ ...f, [k]: e.target.value })}
@@ -341,19 +360,7 @@ export function Register() {
           Account created successfully.
         </p>
 
-        {needsConfirm && (
-          <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <p className="font-semibold">One setting is still switched on</p>
-            <p className="mt-1">
-              Your account exists and your password works. OGESEOUS has not yet turned off phone
-              confirmation for this project, so the app cannot sign you in automatically.
-            </p>
-            <p className="mt-2">
-              A manager can switch it off in Supabase under <b>Authentication → Providers → Phone</b>,
-              by unticking <b>Confirm phone</b>.
-            </p>
-          </div>
-        )}
+
 
         <div className="mt-5 flex flex-wrap gap-2">
           <button className="btn-primary flex-1" onClick={() => nav('/dashboard', { replace: true })}>
@@ -374,10 +381,10 @@ export function Register() {
       </p>
       <form onSubmit={submit} className="space-y-3" noValidate>
         {field('name', 'Full Name', 'text', 'name')}
-        {field('phone', 'Phone Number', 'tel', 'tel')}
-        {field('pw', 'Password', 'password', 'new-password')}
+        {field('phone', 'Phone Number (required)', 'tel', 'tel')}
+        {field('pw', '4-Digit PIN', 'password', 'new-password')}
         <p className="-mt-2 text-xs text-slate-500">{PW_HINT}</p>
-        {field('pw2', 'Confirm Password', 'password', 'new-password')}
+        {field('pw2', 'Confirm PIN', 'password', 'new-password')}
         {err.form && (
           <p role="alert" className="text-sm text-red-600">
             {err.form}

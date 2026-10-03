@@ -59,8 +59,7 @@
 -- ---------------------------------------------------------------------------------------
 alter table public.users alter column email drop not null;
 
--- No index is added on phone. Nothing in the app looks a user up by phone, and public.users is one
--- row per person: an index that nothing queries is only cost.
+create unique index if not exists users_phone_unique on public.users (phone) where phone is not null;
 
 
 -- ---------------------------------------------------------------------------------------
