@@ -53,9 +53,13 @@ export function Home() {
               </Link>
             </div>
           </div>
-          <div className="grid h-56 place-items-center rounded-2xl border-2 border-dashed border-white/40 text-sm text-blue-100 md:h-72">
-            {/* TODO(OGESEOUS): replace with the official image and set site.logoUrl. */}
-            Image placeholder
+          <div className="grid h-56 place-items-center overflow-hidden rounded-2xl bg-white md:h-72">
+            {/* The official logo, whole and uncropped — it carries its own light background. */}
+            <img
+              src={site.logoUrl}
+              alt="OGESEOUS Microfinance — official logo"
+              className="h-full w-full object-contain"
+            />
           </div>
         </div>
       </section>

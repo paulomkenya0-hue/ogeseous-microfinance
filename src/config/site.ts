@@ -13,7 +13,9 @@
 export const site = {
   name: 'OGESEOUS MICROFINANCE',
   tagline: 'Empowering Students, Building Futures',
-  logoUrl: '' as string, // e.g. '/logo.png' — put the official file in public/ and point here
+  // The official logo, served from public/assets. BASE_URL is prepended so the URL stays correct
+  // when the app is built for a sub-path (GitHub Pages serves /ogeseous-microfinance/).
+  logoUrl: `${import.meta.env.BASE_URL}assets/ogeseous-logo.jpg`,
   copyright: '© Paulo Mkenya',
   developer: 'Developed by Paulo Mkenya',
 
