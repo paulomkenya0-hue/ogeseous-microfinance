@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ALLOWED_REPAYMENT_MONTHS,
   contactStepDone,
   DECLARABLE_UNIVERSITIES,
   documentsStepDone,
   financialStepDone,
   guarantorStepDone,
+  isAllowedRepaymentMonths,
   isEditable,
   loanStepDone,
   maskInitials,
   missingDocuments,
+  monthLabel,
   needsRegisterLookup,
   nextStep,
   prevStep,
@@ -26,7 +29,7 @@ const FULL: DraftFacts = {
   amount: 1_000_000,
   purpose: 'TUITION_FEES',
   purpose_other: null,
-  repayment_period_months: 12,
+  repayment_period_months: 3,
   monthly_income: 250_000,
   income_source: 'SELF_EMPLOYED',
   monthly_expenses: 120_000,
@@ -286,5 +289,57 @@ describe('maskInitials', () => {
 
   it('does not leak a name for single-word names either', () => {
     expect(maskInitials('Mwakasege')).toBe('M')
+  })
+})
+
+describe('repayment periods (business rule: 1, 2 or 3 months only)', () => {
+  /**
+   * Mirrors the CHECK on loan_applications.repayment_period_months (004) and the filter inside
+   * allowed_repayment_months() (011). The wizard's select and the admin settings editor read the
+   * same constant, so what the form offers, what the editor accepts and what the database allows
+   * cannot drift apart.
+   */
+  it('offers exactly 1, 2 and 3 months', () => {
+    expect([...ALLOWED_REPAYMENT_MONTHS]).toEqual([1, 2, 3])
+  })
+
+  it('accepts 1, 2 and 3 months', () => {
+    expect(isAllowedRepaymentMonths(1)).toBe(true)
+    expect(isAllowedRepaymentMonths(2)).toBe(true)
+    expect(isAllowedRepaymentMonths(3)).toBe(true)
+  })
+
+  it('rejects every other value the old rule or a typo could produce', () => {
+    for (const m of [0, -1, -12, 4, 5, 6, 12, 18, 24, 120]) {
+      expect(isAllowedRepaymentMonths(m)).toBe(false)
+    }
+  })
+
+  it('rejects decimals and non-numbers — a period is a whole month, never a fraction', () => {
+    expect(isAllowedRepaymentMonths(1.5)).toBe(false)
+    expect(isAllowedRepaymentMonths(2.9)).toBe(false)
+    expect(isAllowedRepaymentMonths(NaN)).toBe(false)
+    expect(isAllowedRepaymentMonths(Infinity)).toBe(false)
+    // Arbitrary strings reaching the helper at runtime (the type says number; callers parse with
+    // Number() first) are refused too — the match is strict, so even the string '1' is not a period.
+    expect(isAllowedRepaymentMonths('two' as unknown as number)).toBe(false)
+    expect(isAllowedRepaymentMonths('1' as unknown as number)).toBe(false)
+  })
+
+  it('the loan step only completes for an allowed period, so an invalid one cannot reach the save', () => {
+    for (const m of [1, 2, 3]) {
+      expect(loanStepDone({ ...FULL, repayment_period_months: m })).toBe(true)
+    }
+    // The old configuration and every other invalid value leave the step unfinished, which keeps
+    // the wizard from ever calling save_application_loan with them.
+    for (const m of [0, 4, 6, 12, 18, 24, null]) {
+      expect(loanStepDone({ ...FULL, repayment_period_months: m })).toBe(false)
+    }
+  })
+
+  it('labels the periods grammatically, including the newly possible singular', () => {
+    expect(monthLabel(1)).toBe('1 month')
+    expect(monthLabel(2)).toBe('2 months')
+    expect(monthLabel(3)).toBe('3 months')
   })
 })

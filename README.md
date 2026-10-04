@@ -234,7 +234,9 @@ that token, so an old receipt cannot be replayed against a new application state
 2. Every further staff account, and every role change, is done through **/admin/settings** (role
    assignment is SUPER_ADMIN only, so a manager cannot mint a super admin).
 3. Confirm the business settings on the same page: loan minimum and maximum, permitted terms, and —
-   new in 014 — **guarantor required** and **required application documents**.
+   new in 014 — **guarantor required** and **required application documents**. Repayment periods are
+   fixed by the business at **1, 2 or 3 months** (enforced by the CHECK constraint in 004 and the
+   filter in `allowed_repayment_months()`); the setting can only narrow that list, never widen it.
 4. Apply the **three Supabase settings** in "Students register with a phone number and a PIN" above
    — enable the Phone provider, untick Confirm phone, and set the minimum password length to 4.
    Until all three are done, **no student can register at all**.

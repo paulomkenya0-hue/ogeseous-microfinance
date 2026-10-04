@@ -7,7 +7,7 @@ import { describeError, rpc, tzs } from '../lib/api'
 import { Badge, Card, ErrorNote, Money, Row, STATUS_TONE, dateTime } from '../components/ui'
 import { universityName, site } from '../config/site'
 import { openDocument } from '../lib/storage'
-import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, purposeText, type AppDocType } from '../lib/application'
+import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, monthLabel, purposeText, type AppDocType } from '../lib/application'
 
 type App = {
   id: string
@@ -235,7 +235,7 @@ export default function ApplicationView() {
       heading('2. Loan details')
       row('Amount requested', tzs(app.amount))
       row('Purpose', purposeText(app.purpose, app.purpose_other))
-      row('Repayment period', app.repayment_period_months ? `${app.repayment_period_months} months` : null)
+      row('Repayment period', app.repayment_period_months ? monthLabel(app.repayment_period_months) : null)
 
       y += 4
       heading('3. Financial information')
@@ -384,7 +384,7 @@ export default function ApplicationView() {
           <Row label="Address">{profile?.address ?? '—'}</Row>
           <Row label="Amount requested"><Money value={app.amount} /></Row>
           <Row label="Purpose">{purposeText(app.purpose, app.purpose_other)}</Row>
-          <Row label="Repayment period">{app.repayment_period_months ? `${app.repayment_period_months} months` : '—'}</Row>
+          <Row label="Repayment period">{app.repayment_period_months ? monthLabel(app.repayment_period_months) : '—'}</Row>
           <Row label="Monthly income"><Money value={app.monthly_income} /></Row>
           <Row label="Source of income">{app.income_source ?? '—'}</Row>
           <Row label="Monthly expenses"><Money value={app.monthly_expenses} /></Row>

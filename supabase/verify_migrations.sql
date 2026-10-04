@@ -633,7 +633,29 @@ where sp.university = 'RUCU' and r.id is null;
 
 
 -- -------------------------------------------------------------------------------------
--- 18. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
+-- 18. Repayment periods are exactly 1, 2 and 3 months (business rule).
+-- -------------------------------------------------------------------------------------
+
+-- 18a. The configured list parses and returns only {1,2,3}. Before the fix this function read the
+--      comma-separated seed through setting_num() and raised 'invalid input syntax for type
+--      numeric'. Expected: one row, {1,2,3}.
+select public.allowed_repayment_months() as allowed_repayment_months;
+
+-- 18b. The column CHECK is the hard floor. PostgreSQL normalises `in (1,2,3)` to
+--      `= ANY (ARRAY[1, 2, 3])` in the stored definition. Expected: one row, PASS; anything else
+--      prints the actual definition for a human to read.
+select case
+         when pg_get_constraintdef(c.oid) like '%ARRAY[1, 2, 3]%' then 'PASS'
+         else 'CHECK NOW - repayment_period_months constraint is: ' || pg_get_constraintdef(c.oid)
+       end as result
+from pg_constraint c
+join pg_class t on t.oid = c.conrelid
+where t.relname = 'loan_applications' and c.contype = 'c'
+  and pg_get_constraintdef(c.oid) like '%repayment_period_months%';
+
+
+-- -------------------------------------------------------------------------------------
+-- 19. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
 --     does. Follow this before a real student is let near it.
 --
 --   1. Sign up with a NEW phone number, a name and a four-digit PIN (e.g. 1234). You should land

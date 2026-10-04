@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { describeError, rpc } from '../lib/api'
+import { describeError, rpc, tzs } from '../lib/api'
 import { Badge, Card, ErrorNote, Money, Row, STATUS_TONE, dateTime, askReason, confirmAction } from '../components/ui'
 import { ROLE_LABELS, universityName, type Role } from '../config/site'
 import { openDocument } from '../lib/storage'
-import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, purposeText, type AppDocType } from '../lib/application'
+import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, monthLabel, purposeText, type AppDocType } from '../lib/application'
 
 type Application = {
   id: string
@@ -295,7 +295,7 @@ export default function AdminApplicationDetail() {
         <dl>
           <Row label="Amount"><Money value={app.amount} /></Row>
           <Row label="Purpose">{purposeText(app.purpose, app.purpose_other)}</Row>
-          <Row label="Repayment period">{app.repayment_period_months ? `${app.repayment_period_months} months` : '—'}</Row>
+          <Row label="Repayment period">{app.repayment_period_months ? monthLabel(app.repayment_period_months) : '—'}</Row>
         </dl>
       </Card>
 
@@ -389,6 +389,7 @@ export default function AdminApplicationDetail() {
   )
 }
 
+/** tzs() with a dash for absent values — an unset optional figure is not a zero. */
 function money(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : `TZS ${value.toLocaleString('en-TZ')}`
+  return value === null || value === undefined ? '—' : tzs(value)
 }

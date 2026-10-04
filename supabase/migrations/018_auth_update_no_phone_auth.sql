@@ -5,7 +5,7 @@ create unique index if not exists users_phone_unique_idx on public.users (phone)
 
 -- Update handle_new_user to prefer email from auth if provided
 create or replace function public.handle_new_user() returns trigger
-language plpgsql security definer set search_path = public as \$\$
+language plpgsql security definer set search_path = public as $$
 declare
   v_phone text;
 begin
@@ -16,7 +16,7 @@ begin
   values (new.id, coalesce(nullif(trim(new.raw_user_meta_data->>'full_name'), ''), ''),
           coalesce(v_phone, ''));
   return new;
-end \$\$;
+end $$;
 
 create or replace trigger on_auth_user_created
   after insert on auth.users

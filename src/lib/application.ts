@@ -23,6 +23,23 @@ export const APPLICATION_STATUSES = [
 
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
 
+/**
+ * The repayment periods the business permits: exactly 1, 2 or 3 months, and nothing else.
+ *
+ * This mirrors the CHECK constraint on loan_applications.repayment_period_months (004) and the
+ * filter inside allowed_repayment_months() (011) — the database stays the authority, and a
+ * configured app_settings list can only ever narrow this, never widen it. The wizard's select,
+ * the admin settings editor and loanStepDone all read this one constant so they cannot drift.
+ */
+export const ALLOWED_REPAYMENT_MONTHS = [1, 2, 3] as const
+
+/** True only for 1, 2 or 3. Anything else — 0, negatives, 4+, decimals, NaN — is not a period. */
+export const isAllowedRepaymentMonths = (m: number): boolean =>
+  (ALLOWED_REPAYMENT_MONTHS as readonly number[]).includes(m)
+
+/** "1 month", "2 months", "3 months" — now that 1 is offered, the plural has to be right. */
+export const monthLabel = (m: number): string => (m === 1 ? '1 month' : `${m} months`)
+
 // ---------------------------------------------------------------------------------------
 // Which university a student says they attend decides how step 1 behaves.
 //
@@ -230,7 +247,8 @@ const has = (v: number | null | undefined): boolean => typeof v === 'number' && 
 
 /** The loan step is complete when the server would accept save_application_loan(). */
 export function loanStepDone(d: DraftFacts): boolean {
-  return has(d.amount) && present(d.purpose, 2) && has(d.repayment_period_months) && (
+  return has(d.amount) && present(d.purpose, 2) &&
+    isAllowedRepaymentMonths(d.repayment_period_months ?? NaN) && (
     d.purpose !== 'OTHER' || present(d.purpose_other, 3)
   )
 }

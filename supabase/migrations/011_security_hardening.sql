@@ -167,7 +167,7 @@ insert into public.app_settings (key, value) values
   ('max_loan_amount',              '5000000'),
   ('max_active_loans_per_student', '1'),
   ('annual_interest_rate',         '0'),
-  ('allowed_repayment_months',     '6,12,18,24'),
+  ('allowed_repayment_months',     '1,2,3'),
   ('institution_name',             'OGESEOUS Microfinance'),
   ('institution_email',            ''),
   ('institution_phone',            ''),
@@ -209,12 +209,25 @@ revoke all on function public.set_setting(text,text) from public;
 grant execute on function public.set_setting(text,text) to authenticated;
 
 -- Allowed repayment periods, so the UI and the database cannot drift apart.
+--
+-- The business permits exactly 1, 2 or 3 months — nothing else. The stored setting is a
+-- comma-separated list ('1,2,3'), so it is read here as TEXT: the original version read it
+-- through setting_num(), which casts the value to numeric and therefore raised "invalid input
+-- syntax for type numeric" on the seeded list, taking loan_policy() and both loan save paths
+-- down with it. Entries outside 1, 2 and 3 are filtered out rather than honoured, so a settings
+-- typo can narrow what is offered but can never widen it beyond the business rule. The hard
+-- floor is the CHECK on loan_applications.repayment_period_months (004) plus the = any() test
+-- in the save functions, so an empty result here refuses saves rather than admitting anything.
 create or replace function public.allowed_repayment_months() returns integer[]
 language sql stable as $$
   select array(
     select btrim(m)::int
-    from unnest(string_to_array(public.setting_num('allowed_repayment_months', 24)::text, ',')) as btrim(m)
-    where btrim(m) ~ '^[0-9]{1,3}$' and btrim(m)::int between 1 and 120
+    from unnest(string_to_array(
+      coalesce(
+        nullif(trim((select value from public.app_settings where key = 'allowed_repayment_months')), ''),
+        '1,2,3'),
+      ',')) as btrim(m)
+    where btrim(m) ~ '^[0-9]{1,3}$' and btrim(m)::int in (1, 2, 3)
     order by 1);
 $$;
 

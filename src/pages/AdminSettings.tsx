@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
-import { describeError, rpc } from '../lib/api'
+import { describeError, rpc, tzs } from '../lib/api'
 import {
   Badge,
   Card,
@@ -14,7 +14,7 @@ import {
   dateTime,
 } from '../components/ui'
 import { ROLE_LABELS, STAFF_ROLES, universityName } from '../config/site'
-import { APP_DOC_TYPES } from '../lib/application'
+import { APP_DOC_TYPES, isAllowedRepaymentMonths } from '../lib/application'
 
 type Setting = { key: string; value: string; updated_at: string; updated_by: string | null }
 type Staff = {
@@ -60,7 +60,12 @@ const MONEY_FIELDS: Field[] = [
 ]
 
 const TERMS_FIELDS: Field[] = [
-  { key: 'allowed_repayment_months', label: 'Repayment periods offered (months)', kind: 'months' },
+  {
+    key: 'allowed_repayment_months',
+    label: 'Repayment periods offered (months)',
+    hint: 'Business rule: only 1, 2 or 3 months exist. This list can offer fewer, never more — anything else is refused here and ignored by the database.',
+    kind: 'months',
+  },
   {
     key: 'annual_interest_rate',
     label: 'Annual interest rate (%)',
@@ -125,11 +130,15 @@ function validate(field: Field, raw: string): string | null {
   }
   if (v === '') return 'Required.'
   if (field.kind === 'months') {
-    const parts = v.split(',').map((p) => p.trim())
-    if (parts.length === 0) return 'Enter at least one period, e.g. 6,12,18,24.'
-    if (parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) < 1 || Number(p) > 120)) {
-      return 'Each period must be a whole number between 1 and 120.'
+    const parts = v.split(',').map((p) => p.trim()).filter((p) => p !== '')
+    if (parts.length === 0) return 'Enter at least one period: 1, 2 or 3.'
+    // The business permits exactly 1, 2 and 3 months. The database filters anything else out of
+    // allowed_repayment_months() anyway; refusing it here saves a manager from a setting that
+    // silently does nothing.
+    if (parts.some((p) => !/^\d+$/.test(p) || !isAllowedRepaymentMonths(Number(p)))) {
+      return 'Only 1, 2 or 3 months are allowed, e.g. 1,2,3.'
     }
+    if (new Set(parts).size !== parts.length) return 'The same period is listed twice.'
     return null
   }
   const n = Number(v)
@@ -395,7 +404,7 @@ export default function AdminSettings() {
                     </td>
                     <td className="py-2 pr-3 text-xs">{p.verified}</td>
                     <td className="py-2 pr-3 text-xs">{p.active_loans}</td>
-                    <td className="py-2 pr-3 text-xs">{Number(p.outstanding).toLocaleString('en-TZ')}</td>
+                    <td className="py-2 pr-3 text-xs">{tzs(p.outstanding)}</td>
                     <td className="py-2 pr-3">
                       {p.id === session?.user.id ? (
                         <span className="text-xs text-slate-400">You</span>

@@ -37,35 +37,18 @@ for the same partial unique index on `public.users(phone)`. Harmless but redunda
 **Proposed fix:** replace `\$\$` with `$$` at both delimiters (4 characters). Optionally drop the
 duplicate index (`drop index if exists public.users_phone_unique_idx;`) in a follow-up migration.
 
-### 0.2 `011_security_hardening.sql` — `allowed_repayment_months()` crashes at runtime
+### 0.2 `011_security_hardening.sql` — `allowed_repayment_months()` crashes at runtime — **FIXED**
 
-`app_settings` seeds `allowed_repayment_months = '6,12,18,24'` (011 line 170), a comma-separated
-list. But `allowed_repayment_months()` (011 lines 212–219) reads it through
-`setting_num('allowed_repayment_months', 24)`, whose body does `value::numeric` — and
-`'6,12,18,24'::numeric` raises `invalid input syntax for type numeric`. The `coalesce` cannot
-catch a cast error. Every caller fails: `loan_policy()` (011:236, 014:271),
-`save_loan_application_draft()` (011:270), `save_application_loan()` (014:532). The LoanWizard
-reads `loan_policy` on mount and calls `save_application_loan` at steps 2/7, so **the loan
-application wizard cannot work** until this is fixed. A manager saving the same comma format from
-/admin/settings would re-trigger it at any time.
+`app_settings` seeded `allowed_repayment_months = '6,12,18,24'` (011 line 170), a comma-separated
+list. But `allowed_repayment_months()` read it through `setting_num(...)`, whose body does
+`value::numeric` — and `'6,12,18,24'::numeric` raises `invalid input syntax for type numeric`,
+taking down `loan_policy()`, `save_loan_application_draft()` and `save_application_loan()`.
 
-**Proposed fix:** make `allowed_repayment_months()` read the raw setting text instead of the
-numeric helper — same shape, same fallback, no caller changes:
-
-```sql
-create or replace function public.allowed_repayment_months() returns integer[]
-language sql stable as $$
-  select array(
-    select btrim(m)::int
-    from unnest(string_to_array(
-      coalesce(
-        nullif(trim((select value from public.app_settings where key = 'allowed_repayment_months')), ''),
-        '24'),
-      ',')) as btrim(m)
-    where btrim(m) ~ '^[0-9]{1,3}$' and btrim(m)::int between 1 and 120
-    order by 1);
-$$;
-```
+**Fix applied (approved with the repayment-period rule change):** the function now reads the
+setting as raw text with a `'1,2,3'` fallback, and filters entries to the business rule of exactly
+1, 2 and 3 months — so it can no longer crash, and a settings typo can narrow what is offered but
+never widen it. The seed is now `'1,2,3'` and the column CHECK in 004 is `in (1,2,3)`. Verify on
+staging with §2's second manual check and verify_migrations.sql section 18.
 
 ### 0.3 Non-blocking discrepancies (record, do not fix blindly)
 
@@ -115,7 +98,7 @@ select case when p.prosrc like '%raw_user_meta_data->>''phone''%'
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname = 'handle_new_user';
 
--- 0.2 fixed: returns {6,12,18,24} instead of raising
+-- 0.2 fixed: returns {1,2,3} instead of raising
 select public.allowed_repayment_months();
 ```
 
@@ -176,10 +159,12 @@ Mark each row PASS / FAIL / BLOCKED / NOT TESTED with a date and initials.
 
 | # | Test | Expected |
 |---|---|---|
-| W1 | Wizard loads | `loan_policy()` returns ranges; no "invalid input syntax" error. |
+| W1 | Wizard loads | `loan_policy()` returns ranges and periods `{1,2,3}`; no "invalid input syntax" error. |
 | W2 | Step 1 RUCU match with an invented register row | Confirms via `verify_student_from_register`. |
 | W3 | Steps 2–7 with uploads, submit | Application number `OGS-<year>-<serial>` shown; row is UNDER_REVIEW. |
 | W4 | /track with the number + a wrong phone | Same "no match" answer as a wrong number — no enumeration. |
+| W5 | Repayment periods: the select offers only 1, 2, 3; RPC by hand with `p_repayment_months` = 0 / -1 / 4 / 6 / 12 / 18 / 24 / 1.5 | Select shows 1/2/3 only; every hand-called invalid value is refused by the server ("Invalid repayment period"), none reaches the row. |
+| W6 | Schedules for each period: approve + disburse three test loans (1, 2 and 3 months), then `get_loan_schedule` | Installment counts are exactly 1, 2 and 3; each schedule sums to the disbursed principal to the shilling (last installment absorbs rounding); due dates one month apart; 1-month loan has a single installment for the full amount. |
 
 ## 6. Security verification on staging
 

@@ -8,6 +8,7 @@ import { hasErrors, type Errors } from '../lib/validate'
 import { site, universityName } from '../config/site'
 import { discardOwnObjects, openDocument, uploadApplicationDocument } from '../lib/storage'
 import {
+  ALLOWED_REPAYMENT_MONTHS,
   APP_DOC_HINTS,
   APP_DOC_LABELS,
   APP_DOC_TYPES,
@@ -16,6 +17,7 @@ import {
   STEP_LABELS,
   WIZARD_STEPS,
   missingDocuments,
+  monthLabel,
   needsRegisterLookup,
   nextStep,
   prevStep,
@@ -1027,9 +1029,9 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             <Field label="Repayment period" error={err.months}>
               <select className="input mt-1" value={months} onChange={(e) => { setMonths(e.target.value); setDirty(true) }}>
                 <option value="">Select a repayment period</option>
-                {(policy?.periods?.length ? policy.periods : [6, 12, 18, 24]).map((m) => (
+                {(policy?.periods?.length ? policy.periods : ALLOWED_REPAYMENT_MONTHS).map((m) => (
                   <option key={m} value={m}>
-                    {m} months
+                    {monthLabel(m)}
                   </option>
                 ))}
               </select>
@@ -1037,7 +1039,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
 
             {monthly > 0 && (
               <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">
-                Roughly {tzs(Math.round(monthly))} a month over {months} months.
+                Roughly {tzs(Math.round(monthly))} a month over {monthLabel(Number(months))}.
                 {policy && policy.annual_interest_rate > 0 && (
                   <>
                     {' '}
@@ -1327,7 +1329,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
               </Row>
               <Row label="Amount requested">{tzs(amountNum ?? 0)}</Row>
               <Row label="Purpose">{purposeText(purpose, purposeOther)}</Row>
-              <Row label="Repayment period">{months ? `${months} months` : '—'}</Row>
+              <Row label="Repayment period">{months ? monthLabel(Number(months)) : '—'}</Row>
               <Row label="Monthly income">{tzs(num(income) ?? 0)}</Row>
               <Row label="Income source">{incomeSource || '—'}</Row>
               <Row label="Monthly expenses">{tzs(num(expenses) ?? 0)}</Row>

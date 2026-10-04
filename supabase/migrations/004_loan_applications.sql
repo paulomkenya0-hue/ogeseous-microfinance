@@ -11,7 +11,9 @@ create table public.loan_applications (
   amount numeric(12,2) not null check (amount > 0),
   purpose text not null check (purpose in ('TUITION_FEES','ACCOMMODATION','BOOKS_AND_MATERIALS','OTHER')),
   purpose_other text,
-  repayment_period_months integer not null check (repayment_period_months in (6,12,18,24)),
+  -- Business rule: exactly 1, 2 or 3 months. This CHECK is the hard floor; the configurable
+  -- list in app_settings (011) can only ever narrow it, never widen it.
+  repayment_period_months integer not null check (repayment_period_months in (1,2,3)),
   status text not null default 'DRAFT' check (status in ('DRAFT','SUBMITTED')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -43,7 +45,7 @@ begin
     raise exception 'Complete student verification before applying for a loan';
   end if;
   if p_purpose not in ('TUITION_FEES','ACCOMMODATION','BOOKS_AND_MATERIALS','OTHER') then raise exception 'Invalid purpose'; end if;
-  if p_repayment_months not in (6,12,18,24) then raise exception 'Invalid repayment period'; end if;
+  if p_repayment_months not in (1,2,3) then raise exception 'Invalid repayment period'; end if;
 
   insert into public.loan_applications (user_id, amount, purpose, purpose_other, repayment_period_months)
   values (auth.uid(), p_amount, p_purpose, nullif(trim(coalesce(p_purpose_other,'')),''), p_repayment_months)
