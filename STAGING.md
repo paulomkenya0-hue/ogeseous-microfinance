@@ -16,7 +16,13 @@ The static audit (001→018, read in full) found two defects that staging would 
 immediately. **They are reported here with their proposed fixes and are awaiting approval — the
 migration files have deliberately not been rewritten unilaterally.**
 
-### 0.1 `018_auth_update_no_phone_auth.sql` — syntax error (migration cannot execute)
+### 0.1 `018_auth_update_no_phone_auth.sql` — syntax error (migration cannot execute) — **FIXED**
+
+> **Status:** fixed in the working tree. The delimiters are now plain `$$` throughout, the
+> duplicate `users_phone_unique_idx` index is dropped (`drop index if exists`), and the profile
+> phone no longer falls back to `''`. `verify_migrations.sql` §19 now checks the trigger body,
+> the single unique index and the absence of empty-string phones. The byte-level note below
+> describes the defect as it was reported.
 
 The function body is delimited by literal `\$\$` (backslash-dollar) at lines 8 and 19 instead of
 `$$`. Verified at byte level (`5C 24 5C 24`) in both the working tree and remote HEAD `714dd09`.
@@ -59,8 +65,8 @@ staging with §2's second manual check and verify_migrations.sql section 18.
 - 011's two storage policies (lines 484–487) have no `drop policy if exists` — 011 is not
   re-runnable. Fine for one-shot migrations; matters if a staging run is repeated.
 - 005's `get_application_verification` is granted to `anon` with sequential application numbers
-  guarded only by a 10-hex-char (40-bit) token and **no rate limit** (unlike `track_application`,
-  which has one). Flag for a risk decision; add a rate limit in a future migration.
+  guarded only by a 10-hex-char (40-bit) token. **Rate limiting added in 019** (120/min global,
+  10/min per application number), so this is now handled rather than only flagged.
 - 013/014 `delete_my_account` deletes the `public.users` row but cannot delete the `auth.users`
   identity (no SQL path to it). The orphan auth account can sign in but gets "Account unavailable".
   Acceptable; document for support.

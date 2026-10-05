@@ -107,11 +107,20 @@ declare
   v_monthly numeric;
   i integer;
 begin
+  -- This allocator moves money across a loan, so it is never callable from the client. Only our
+  -- own trusted definer functions (which set the transaction-local marker first) may invoke it.
+  if not public.in_trusted_write() then
+    raise exception 'build_loan_schedule is internal-only; call disburse_loan or recalculate_loan instead';
+  end if;
+
   select l.principal_amount, la.repayment_period_months
     into v_principal, v_months
   from public.loans l join public.loan_applications la on la.id = l.application_id
   where l.id = p_loan_id;
   if v_principal is null then raise exception 'Loan not found'; end if;
+
+  -- Serialize concurrent schedule/recalculation work on the same loan.
+  perform 1 from public.loans where id = p_loan_id for update;
   if v_months < 1 then raise exception 'Invalid repayment period on the application'; end if;
 
   if exists (select 1 from public.repayments where loan_id = p_loan_id and reversed_at is null) then
@@ -152,7 +161,9 @@ begin
   update public.loans set outstanding_balance = v_total where id = p_loan_id;
 end $$;
 revoke all on function public.build_loan_schedule(uuid) from public;
-grant execute on function public.build_loan_schedule(uuid) to authenticated;
+-- Internal-only: deliberately NO grant to authenticated or anon. The trusted wrappers
+-- (disburse_loan, recalculate_loan) invoke it as the function owner, which needs no grant.
+revoke execute on function public.build_loan_schedule(uuid) from authenticated, anon;
 
 
 -- ---------------------------------------------------------------------------------------
@@ -173,9 +184,19 @@ declare
   v_take numeric;
   v_outstanding numeric;
 begin
+  -- Internal allocator: only callable from a trusted definer function that set the
+  -- transaction-local marker first. Direct RPC calls have no marker and are refused.
+  if not public.in_trusted_write() then
+    raise exception 'rebuild_loan_payments is internal-only; call recalculate_loan or record a repayment instead';
+  end if;
+
+  -- Serialize concurrent rebuilds of the same loan (record_repayment already holds this lock
+  -- in the same transaction, so re-taking it is a no-op there).
+  perform 1 from public.loans where id = p_loan_id for update;
+
   update public.loan_installments
-     set amount_paid = 0, status = 'PENDING', paid_at = null, updated_at = now()
-   where loan_id = p_loan_id;
+      set amount_paid = 0, status = 'PENDING', paid_at = null, updated_at = now()
+    where loan_id = p_loan_id;
 
   for pay in
     select r.amount from public.repayments r
@@ -217,7 +238,9 @@ begin
    where id = p_loan_id;
 end $$;
 revoke all on function public.rebuild_loan_payments(uuid) from public;
-grant execute on function public.rebuild_loan_payments(uuid) to authenticated;
+-- Internal-only: deliberately NO grant to authenticated or anon. The trusted wrappers
+-- (record_repayment, reverse_repayment, recalculate_loan) invoke it as the function owner.
+revoke execute on function public.rebuild_loan_payments(uuid) from authenticated, anon;
 
 
 -- Repair entry point. If a total ever looks wrong, this recomputes it from the repayments table,
@@ -229,6 +252,7 @@ begin
   if not exists (select 1 from public.users where id = auth.uid() and role in ('MANAGER','SUPER_ADMIN') and status = 'ACTIVE') then
     raise exception 'Only managers or super admins can recalculate a loan';
   end if;
+  perform public.trusted_write();
   perform public.rebuild_loan_payments(p_loan_id);
   select outstanding_balance into v_outstanding from public.loans where id = p_loan_id;
   insert into public.audit_logs (actor_id, action, entity, entity_id, metadata)
@@ -289,6 +313,8 @@ begin
   insert into public.loans (application_id, user_id, principal_amount, outstanding_balance, disbursed_by)
   values (p_application_id, v_user, p_amount, p_amount, auth.uid()) returning id into v_loan_id;
 
+  -- Marks this transaction as trusted so the internal allocator below runs.
+  perform public.trusted_write();
   perform public.build_loan_schedule(v_loan_id);
 
   update public.loan_applications set status = 'DISBURSED' where id = p_application_id;
@@ -351,6 +377,8 @@ begin
   values (p_loan_id, p_amount, p_method, nullif(trim(p_reference), ''), auth.uid())
   returning id into v_id;
 
+  -- Marks this transaction as trusted so the internal allocator below runs.
+  perform public.trusted_write();
   perform public.rebuild_loan_payments(p_loan_id);
 
   insert into public.audit_logs (actor_id, action, entity, entity_id, metadata)
@@ -403,6 +431,8 @@ begin
      set reversed_at = now(), reversed_by = auth.uid(), reversal_reason = trim(p_reason)
    where id = p_repayment_id;
 
+  -- Marks this transaction as trusted so the internal allocator below runs.
+  perform public.trusted_write();
   perform public.rebuild_loan_payments(v_loan);
 
   insert into public.audit_logs (actor_id, action, entity, entity_id, metadata)

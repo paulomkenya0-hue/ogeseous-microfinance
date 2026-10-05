@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 017 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 018 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 17 migrations' objects exist?
+-- 1. Do all 18 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -655,7 +655,46 @@ where t.relname = 'loan_applications' and c.contype = 'c'
 
 
 -- -------------------------------------------------------------------------------------
--- 19. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student
+-- 19. Migration 018: synthetic-email signup must propagate phone from metadata, exactly one
+--     unique index on users(phone), and no empty-string phone values. Read-only checks.
+-- -------------------------------------------------------------------------------------
+
+-- 19a. The trigger body must consult the metadata phone for the users row too (that is the 018
+--      change vs 016), and must not fall back to an empty string for the profile phone.
+--      Expected: two rows, each PASS.
+select '018_body_reads_metadata_phone' as check,
+       case when p.prosrc like '%coalesce(new.phone, new.raw_user_meta_data%' then 'PASS'
+            else 'FAIL - handle_new_user does not read the metadata phone for users.phone'
+       end as result
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'handle_new_user'
+union all
+select '018_no_empty_string_phone_fallback',
+       case when p.prosrc like '%coalesce(v_phone, '')%' then 'FAIL - profile phone falls back to empty string'
+            else 'PASS'
+       end
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'handle_new_user';
+
+-- 19b. Exactly one partial unique index on public.users(phone). Expected: users_phone_unique
+--      present, users_phone_unique_idx absent (dropped by 018).
+select 'canonical_phone_unique_index' as check,
+       case when to_regclass('public.users_phone_unique') is not null then 'PASS'
+            else 'FAIL - users_phone_unique missing' end as result
+union all
+select 'no_duplicate_phone_unique_index',
+       case when to_regclass('public.users_phone_unique_idx') is null then 'PASS'
+            else 'FAIL - duplicate index users_phone_unique_idx still exists' end;
+
+-- 19c. No empty-string phone numbers anywhere; phone is either NULL or a real number.
+--      Expected: zero rows from both.
+select 'users_empty_phone' as problem, count(*)::text as rows from public.users where phone = ''
+union all
+select 'profiles_empty_phone', count(*)::text from public.student_profiles where phone = '';
+
+
+-- -------------------------------------------------------------------------------------
+-- 20. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student    
 --     does. Follow this before a real student is let near it.
 --
 --   1. Sign up with a NEW phone number, a name and a four-digit PIN (e.g. 1234). You should land

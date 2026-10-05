@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAdminList } from '../lib/useAdminList'
 import { describeError, tzs } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import {
@@ -14,7 +13,15 @@ import {
   dateTime,
 } from '../components/ui'
 
-type Loan = { id: string; outstanding_balance: number }
+type LoanSearchRow = {
+  loan_id: string
+  full_name: string | null
+  phone: string | null
+  application_number: string | null
+  outstanding_balance: number
+  disbursed_at: string
+}
+
 type Repayment = {
   id: string
   amount: number
@@ -36,16 +43,33 @@ export default function AdminRepayments() {
   const { role, session } = useAuth()
   const canReverse = role === 'MANAGER' || role === 'SUPER_ADMIN'
 
-  const loans = useAdminList<Loan>(
-    (from, to) =>
-      supabase
-        .from('loans')
-        .select('id,outstanding_balance', { count: 'exact' })
-        .eq('status', 'ACTIVE')
-        .order('outstanding_balance', { ascending: false })
-        .range(from, to),
-    100,
-  )
+  // Server-side loan search: matches loan ID prefix, application number, student name or
+  // phone. Replaces the old "first 100 active loans" dropdown that could not reach loan
+  // #101 through the UI. Results are capped at 25 by the function.
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<LoanSearchRow[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
+
+  const runSearch = useCallback(async (q: string) => {
+    setSearching(true)
+    setSearchError('')
+    try {
+      const { data, error } = await supabase.rpc('search_active_loans', { p_query: q })
+      if (error) throw new Error(error.message)
+      setResults((data ?? []) as LoanSearchRow[])
+    } catch (e) {
+      setSearchError(describeError(e))
+      setResults([])
+    } finally {
+      setSearching(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => void runSearch(query), 300)
+    return () => clearTimeout(t)
+  }, [query, runSearch])
 
   const [loanId, setLoanId] = useState('')
   const [amount, setAmount] = useState('')
@@ -56,8 +80,13 @@ export default function AdminRepayments() {
   const [error, setError] = useState('')
   const [history, setHistory] = useState<Repayment[]>([])
 
-  const selected = loans.rows.find((l) => l.id === loanId) ?? null
-  const remaining = Number(selected?.outstanding_balance ?? 0)
+  // Snapshot of the chosen loan so it survives a search refresh (e.g. the result list no
+  // longer contains it because the repayment just closed it out).
+  const [selected, setSelected] = useState<LoanSearchRow | null>(null)
+  // Prefer the live search row (fresh outstanding after a payment); fall back to the snapshot
+  // so the panel stays populated even if the loan dropped out of the current search results.
+  const current = results.find((l) => l.loan_id === loanId) ?? selected
+  const remaining = Number(current?.outstanding_balance ?? 0)
 
   const loadHistory = useCallback(async (id: string) => {
     if (!id) {
@@ -114,7 +143,7 @@ export default function AdminRepayments() {
     setMsg(`Repayment of ${tzs(value)} recorded and allocated to the oldest unpaid installments.`)
     setAmount('')
     setReference('')
-    loans.reload()
+    void runSearch(query)
     await loadHistory(loanId)
   }
 
@@ -134,7 +163,7 @@ export default function AdminRepayments() {
       return
     }
     setMsg('Repayment reversed.')
-    loans.reload()
+    void runSearch(query)
     await loadHistory(loanId)
   }
 
@@ -144,45 +173,71 @@ export default function AdminRepayments() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-navy">Repayments</h1>
 
-      <ErrorNote error={error || loans.error} onRetry={loans.reload} />
+      <ErrorNote error={error || searchError} onRetry={() => void runSearch(query)} />
       {msg && <p className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{msg}</p>}
 
       <Card
         title="Record a repayment"
         hint="Payments are allocated to the oldest unpaid installment first, then the loan balance and status are recalculated from the repayments table."
       >
-        {loans.loading ? (
-          <p className="text-slate-500">Loading active loans…</p>
-        ) : loans.rows.length === 0 ? (
-          <Empty>No active loans to collect against.</Empty>
-        ) : (
-          <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2" noValidate>
-            <label className="block text-sm font-medium sm:col-span-2">
-              Loan
-              <select
-                className="input mt-1"
-                value={loanId}
-                onChange={(e) => {
-                  setLoanId(e.target.value)
-                  setAmount('')
-                }}
-              >
-                <option value="">Select an active loan</option>
-                {loans.rows.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.id.slice(0, 8)} — outstanding {tzs(l.outstanding_balance)}
-                  </option>
-                ))}
-              </select>
-            </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm font-medium sm:col-span-2">
+            Find a loan
+            <input
+              className="input mt-1"
+              placeholder="Student name, phone, application number or loan ID…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
 
-            {selected && (
-              <p className="sm:col-span-2 text-xs text-slate-500">
-                Scheduled outstanding on this loan: <b>{tzs(remaining)}</b>. Nothing beyond that can be
-                allocated.
-              </p>
-            )}
+          {searching && <p className="text-sm text-slate-500">Searching…</p>}
+          {!searching && results.length === 0 && (
+            <Empty>
+              {query.trim() === ''
+                ? 'No active loans yet.'
+                : 'No active loans match that search.'}
+            </Empty>
+          )}
 
+          {results.length > 0 && (
+            <ul className="sm:col-span-2 divide-y rounded-lg border">
+              {results.map((l) => (
+                <li key={l.loan_id}>
+                  <button
+                    type="button"
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm ${
+                      loanId === l.loan_id ? 'bg-navy/5 font-medium' : 'hover:bg-slate-50'
+                    }`}
+                    onClick={() => {
+                      setLoanId(l.loan_id)
+                      setSelected(l)
+                      setAmount('')
+                    }}
+                  >
+                    <span>
+                      {l.full_name ?? 'Unnamed'} · {l.phone ?? 'no phone'}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {l.application_number ?? l.loan_id.slice(0, 8)} — outstanding{' '}
+                      {tzs(l.outstanding_balance)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {current && (
+            <p className="sm:col-span-2 text-xs text-slate-500">
+              Selected loan {current.loan_id.slice(0, 8)} ({current.full_name ?? 'unnamed'}) —
+              scheduled outstanding: <b>{tzs(remaining)}</b>. Nothing beyond that can be allocated.
+            </p>
+          )}
+        </div>
+
+        {current && (
+          <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 mt-3" noValidate>
             <label className="block text-sm font-medium">
               Amount (TZS)
               <span className="mt-1 flex gap-2">

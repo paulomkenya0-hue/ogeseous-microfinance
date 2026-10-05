@@ -50,7 +50,9 @@ Run these in the Supabase SQL editor, **in order**:
 | 015 | `015_register_lookup_fix.sql` | **Corrects two functions in 014 whose OUT parameter shadowed a column they read, which made the RUCU lookup raise on every call** |
 | 016 | `016_phone_signup.sql` | **Students register with a phone number and no email address. Makes `users.email` nullable and teaches the signup trigger about `auth.users.phone`** |
 | 017 | `017_no_rucu_self_declaration.sql` | **Closes a self-verification path: `declare_application_student` now refuses `RUCU`, so RUCU details can only come from the register** |
-| 018 | `018_auth_update_no_phone_auth.sql` | **Retires phone-identity auth: students use a synthetic email derived from the phone number; `handle_new_user` takes the phone from metadata; unique index on `users(phone)`. Note: see STAGING.md §0.1 — this file has a reported syntax defect awaiting an approved fix.** |
+| 018 | `018_auth_update_no_phone_auth.sql` | Retires phone-identity auth: students sign in with a synthetic email derived from the phone number; `handle_new_user` reads phone from metadata/auth; single canonical unique index on `users(phone)`. The §0.1 syntax defect is fixed in place. |
+| 019 | `019_verification_rate_limit.sql` | Dedicated rate-limit table + throttling on `get_application_verification` |
+| 020 | `020_search_active_loans.sql` | Server-side active-loan search for the repayments console |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
