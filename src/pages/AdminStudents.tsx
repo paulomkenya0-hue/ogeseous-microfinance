@@ -3,6 +3,7 @@ import Papa from 'papaparse'
 import { supabase } from '../lib/supabase'
 import { useAdminList } from '../lib/useAdminList'
 import { describeError } from '../lib/api'
+import { normalizeRucuStudentRow } from '../lib/rucuImport'
 import { Badge, Card, Empty, ErrorNote, Pager, STATUS_TONE, Table, askReason } from '../components/ui'
 import { universityName } from '../config/site'
 
@@ -74,19 +75,28 @@ export default function AdminStudents() {
       header: true,
       skipEmptyLines: true,
       complete: async (res) => {
-        const required = ['form_four_index_number', 'registration_number', 'last_name', 'full_name']
-        const headers = res.meta.fields ?? []
-        const missing = required.filter((h) => !headers.includes(h))
-        if (missing.length > 0) {
+        const rows = res.data.map(normalizeRucuStudentRow).filter((row) =>
+          Object.values(row).some((value) => Boolean(value)),
+        )
+        const hasRegistration = rows.some((row) => row.registration_number)
+        const hasLastName = rows.some((row) => row.last_name)
+        const hasFullName = rows.some((row) => row.full_name)
+        if (!hasRegistration || !hasLastName || !hasFullName) {
           setImporting(false)
-          setImportErr(`CSV is missing required columns: ${missing.join(', ')}`)
+          setImportErr('CSV needs registration number, last name, and full name (or first and last name) columns.')
           return
         }
 
-        const rows = res.data.filter((r) => r.form_four_index_number && r.registration_number)
-        if (rows.length === 0) {
+        const invalidRows = rows
+          .map((row, index) => ({ row, line: index + 2 }))
+          .filter(({ row }) => !row.registration_number || !row.last_name || !row.full_name)
+        if (rows.length === 0 || invalidRows.length > 0) {
           setImporting(false)
-          setImportErr('No usable rows found. Every row needs a Form Four Index Number and a Registration Number.')
+          setImportErr(
+            invalidRows.length > 0
+              ? `Missing registration number, last name, or full name on CSV row(s): ${invalidRows.map(({ line }) => line).join(', ')}`
+              : 'No usable student rows found.',
+          )
           return
         }
 
@@ -111,7 +121,7 @@ export default function AdminStudents() {
 
       <Card
         title="RUCU student register"
-        hint="CSV columns: form_four_index_number, registration_number, last_name, full_name. Existing rows are updated, not duplicated."
+        hint="Accepts registration number, first/middle/last name, programme, and year columns. Form Four index is optional. Existing students are updated, not duplicated."
       >
         <input
           type="file"

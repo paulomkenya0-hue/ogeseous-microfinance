@@ -53,6 +53,8 @@ Run these in the Supabase SQL editor, **in order**:
 | 018 | `018_auth_update_no_phone_auth.sql` | Retires phone-identity auth: students sign in with a synthetic email derived from the phone number; `handle_new_user` reads phone from metadata/auth; single canonical unique index on `users(phone)`. The §0.1 syntax defect is fixed in place. |
 | 019 | `019_verification_rate_limit.sql` | Dedicated rate-limit table + throttling on `get_application_verification` |
 | 020 | `020_search_active_loans.sql` | Server-side active-loan search for the repayments console |
+| 021 | `021_rucu_register_csv_import.sql` | Allows the current RUCU register format without inventing Form Four index numbers; validates import rows in the database |
+| 022 | `022_staff_suspension_audit_reason.sql` | Requires and records the reason for suspending a user account |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 

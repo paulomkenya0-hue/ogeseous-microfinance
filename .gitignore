@@ -11,3 +11,6 @@ dist
 # Supabase CLI local machine state: project ref, pooler URL, service version pins.
 # This is per-developer, not part of the project.
 supabase/.temp
+
+# Student identity data must not be committed with the application source.
+/RUCU_Students_2026-27.csv

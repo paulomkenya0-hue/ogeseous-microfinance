@@ -247,8 +247,9 @@ export default function AdminSettings() {
 
   const changeStatus = async (person: Staff, next: 'ACTIVE' | 'SUSPENDED') => {
     setStaffError('')
+    let reason: string | null = null
     if (next === 'SUSPENDED') {
-      const reason = askReason(
+      reason = askReason(
         `${person.email} will be signed out of every function immediately — no money, no verification, no data access.\n\nReason for suspension (kept in the audit log):`,
       )
       if (reason === null) return
@@ -257,7 +258,11 @@ export default function AdminSettings() {
     }
 
     setBusyId(person.id)
-    const { error: e } = await supabase.rpc('set_user_status', { p_user_id: person.id, p_status: next })
+    const { error: e } = await supabase.rpc('set_user_status', {
+      p_user_id: person.id,
+      p_status: next,
+      p_reason: reason,
+    })
     setBusyId(null)
     if (e) {
       setStaffError(describeError(e))

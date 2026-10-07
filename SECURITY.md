@@ -82,20 +82,18 @@ environment this was written in. It is a checklist and an account of what the co
 1. **Make the repository private.** The TODO at the top of this file.
 2. **Environment variables** — set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and
    `VITE_BASE_PATH` in your hosting provider's dashboard or repository secrets.
-3. **Supabase Auth settings — students register with a phone number and a four-digit PIN** (016).
-   Four values, all project settings that no code in this repository can change:
+3. **Supabase Auth settings — students use a phone number and four-digit PIN, mapped to a synthetic
+  email** (see `README.md` and `phoneToAuthEmail` in `src/lib/validate.ts`). The project settings
+   must match the current flow:
 
-   - **Authentication → Providers → Phone → Phone provider: ON.** Without it `signUp({ phone })`
-     fails and *no student can register at all*.
-   - **Authentication → Providers → Phone → Confirm phone: OFF.** Otherwise sign-up returns no
-     session and nobody reaches the dashboard after registering.
-   - **Authentication → Sign In / Providers → Email → Minimum password length: 4.** GoTrue rejects a
-     shorter password before this app's own rule is consulted. Student registration and sign-in no
-     longer depend on this — the app stretches PINs before they reach the auth server
-     (`pinToAuthPassword` in `src/lib/validate.ts`) — but the staff reset page stores passwords as
-     typed, so the setting still governs that page.
-   - **Authentication → Providers → Email → Confirm email: OFF.** This no longer affects students,
-     who have no email address. It still holds back a *staff* sign-up.
+   - **Authentication → Providers → Email: ON.** Student accounts use the email provider with a
+     synthetic address; staff continue to use their real email addresses.
+   - **Authentication → Providers → Phone: OFF.** The app does not use Supabase phone identity or
+     SMS verification.
+   - **Authentication → Providers → Email → Confirm email: OFF.** Synthetic student addresses
+     cannot receive confirmation mail, and staff sign-up also needs an immediate session.
+   - **Authentication → Sign In / Providers → Email → Minimum password length: 4.** Student PINs
+     are stretched before reaching Auth, but staff password resets store the password as typed.
 
    Also set the Site URL and Redirect URLs to the real domain — email password reset depends on it.
 
