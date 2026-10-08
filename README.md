@@ -55,6 +55,10 @@ Run these in the Supabase SQL editor, **in order**:
 | 020 | `020_search_active_loans.sql` | Server-side active-loan search for the repayments console |
 | 021 | `021_rucu_register_csv_import.sql` | Allows the current RUCU register format without inventing Form Four index numbers; validates import rows in the database |
 | 022 | `022_staff_suspension_audit_reason.sql` | Requires and records the reason for suspending a user account |
+| 023 | `023_fix_verification_requests_select.sql` | Restores the correct admin read policy for verification requests |
+| 024 | `024_rucu_register_admin_read.sql` | Limits RUCU register reads to managers and super admins |
+| 025 | `025_rucu_explicit_confirmation.sql` | Separates RUCU lookup from student confirmation; a short-lived match must be confirmed before a draft is created |
+| 026 | `026_super_admin_mfa.sql` | Requires aal2 for super-admin data and actions, while preserving each existing role check |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
@@ -69,10 +73,12 @@ need a schedule (see the note below). Run it before any real money moves.
 One of the two has to be the account identifier. Students are created against a **synthetic email
 address derived from the phone number** (`phoneToAuthEmail` in `src/lib/validate.ts`), because this
 project runs no SMS provider — the Phone provider stays **OFF**, and the 016-era phone-identity
-flow is retired. The signup form asks for a full name, a phone number and a four-digit PIN and
-nothing else; the student never sees the derived address, and sign-in derives it again from the
-number they type. Staff are unaffected: they keep signing in with their email address, exactly as
-before, and the sign-in page tells them apart by whether what they typed contains an `@`.
+flow is retired. The signup form asks for a phone number and a four-digit PIN; the student never
+sees the derived address, and sign-in derives it again from the number they type. The student's
+name is collected during the loan application, from the RUCU register for RUCU students or by
+manual entry for other universities. Staff are unaffected: they keep signing in with their email
+address, exactly as before, and the sign-in page tells them apart by whether what they typed
+contains an `@`.
 
 These are project settings. No amount of editing `src/` will change any of them.
 
@@ -81,6 +87,12 @@ These are project settings. No amount of editing `src/` will change any of them.
 | 1 | **Authentication → Providers → Email** | Leave the **Email** provider **ON** (it is by default) and **untick "Confirm email"** (or enable autoconfirm). With confirmation on, sign-up returns no session, so nobody lands on the dashboard after registering — and the synthetic address has no inbox to confirm through. |
 | 2 | **Authentication → Providers → Phone** | Leave the **Phone** provider **OFF**. The app does not use it; turning it on only opens an identity path nobody maintains. |
 | 3 | **Authentication → Sign In / Providers → Email → Minimum password length** | Set it to **4**. This no longer gates student registration (see below), but the staff password-reset page stores a password exactly as typed, and a four-digit staff password is refused by the server unless the minimum is 4. |
+| 4 | **Authentication → MFA** | Enable the **TOTP** factor. Super admins must enroll an authenticator app and verify a 6-digit code before admin access is granted. |
+
+Apply migrations through **026** before signing in as a super admin. The database checks the JWT
+assurance level (`aal2`) as well as the existing per-action role checks, so hiding the admin page in
+the browser is not the security boundary. Managers and other staff keep their existing role-based
+access. Successful super-admin enrollment and MFA verification are recorded in `audit_logs`.
 
 **Why registration no longer depends on setting 3.** A bare four-character PIN fails GoTrue's
 default minimum password length (6) before any code in this repository runs, and the rejection
@@ -171,7 +183,7 @@ application row itself:
 
 | Step | What it collects | Saved by |
 |------|------------------|----------|
-| 1 Student | RUCU/RUCU register match on registration number **and** last name, or a self-declaration for the other universities | `verify_student_from_register` / `declare_application_student` |
+| 1 Student | RUCU register match on registration number **and** last name, followed by explicit student confirmation; or a self-declaration for other universities | `verify_student_from_register` / `confirm_student_from_register` / `declare_application_student` |
 | 2 Loan details | amount, purpose, repayment period | `save_application_loan` |
 | 3 Contact | phone, address, emergency contact | `save_application_contact` |
 | 4 Financial | income, source, expenses, support | `save_application_financial` |

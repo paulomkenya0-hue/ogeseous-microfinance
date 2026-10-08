@@ -87,6 +87,15 @@ type Policy = {
 }
 
 type DocRow = { doc_type: string; storage_path: string; uploaded_at: string }
+type RucuMatch = {
+  rucu_student_id: string
+  full_name: string
+  registration_number: string
+  form_four_index_number: string | null
+  programme: string | null
+  year_of_study: string | null
+  application_id: string | null
+}
 
 const OPEN_STATUSES = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED'] as const
 const STEP_LIST = WIZARD_STEPS.map((key) => ({ key, label: STEP_LABELS[key] }))
@@ -192,6 +201,7 @@ export default function LoanWizard() {
   // Step 1
   const [reg, setReg] = useState('')
   const [lastName, setLastName] = useState('')
+  const [rucuMatch, setRucuMatch] = useState<RucuMatch | null>(null)
   const [declUni, setDeclUni] = useState('')
   const [declName, setDeclName] = useState('')
   const [declReg, setDeclReg] = useState('')
@@ -479,7 +489,7 @@ export default function LoanWizard() {
   const runLookup = async () => {
     setNote('')
     setErr({})
-    setRecheck(false)
+    setRucuMatch(null)
 
     if (!declUni) return setErr({ declUni: 'Choose your university' })
 
@@ -499,16 +509,9 @@ export default function LoanWizard() {
       //
       // "Record not found" is a real answer from the database and only a real answer. Anything else
       // reports what the database actually said.
-      type RegisterMatch = {
-        rucu_student_id: string
-        full_name: string
-        registration_number: string
-        programme: string | null
-        year_of_study: string | null
-      }
-      let rows: RegisterMatch[]
+      let rows: RucuMatch[]
       try {
-        rows = await rpc<RegisterMatch>('verify_student_from_register', {
+        rows = await rpc<RucuMatch>('verify_student_from_register', {
           p_registration: reg.trim(),
           p_last_name: lastName.trim(),
         })
@@ -523,8 +526,8 @@ export default function LoanWizard() {
       if (rows.length === 0) {
         return setErr({ form: 'Student record not found. Please check your registration number and last name.' })
       }
+      setRucuMatch(rows[0])
       setNote(`Student found: ${rows[0].full_name}. Review the details below and confirm they are yours before continuing.`)
-      await load()
       return
     }
 
@@ -545,6 +548,21 @@ export default function LoanWizard() {
     setBusy(null)
     if (error) return setErr({ form: describeError(error) })
     setNote('Details recorded. OGESEOUS staff will confirm them together with your documents when they review your application.')
+    await load()
+    go(nextStep('student') ?? 'review')
+  }
+
+  const confirmRucuRecord = async () => {
+    if (!rucuMatch) return
+    setBusy('confirm')
+    const { error } = await supabase.rpc('confirm_student_from_register', {
+      p_registration: rucuMatch.registration_number,
+      p_last_name: lastName.trim(),
+    })
+    setBusy(null)
+    if (error) return setErr({ form: describeError(error) })
+    setRucuMatch(null)
+    setRecheck(false)
     await load()
     go(nextStep('student') ?? 'review')
   }
@@ -927,7 +945,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
                 <select
                   className="input mt-1"
                   value={declUni}
-                  onChange={(e) => { setDeclUni(e.target.value); setDirty(true); setErr({}) }}
+                  onChange={(e) => { setDeclUni(e.target.value); setRucuMatch(null); setDirty(true); setErr({}) }}
                 >
                   <option value="">Select your university</option>
                   {site.universities.map((u) => (
@@ -943,6 +961,25 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
                   Choose your university above. Ruaha Catholic University students are found in the
                   RUCU register; students of the other universities enter their details themselves.
                 </p>
+              ) : isRucu && rucuMatch ? (
+                <div className="space-y-4">
+                  <p className="text-sm font-medium text-navy">Is this your student record? Check the details before confirming.</p>
+                  <dl className="grid gap-4 sm:grid-cols-2">
+                    <ReadOnly label="Full name" value={rucuMatch.full_name} />
+                    <ReadOnly label="Registration number" value={rucuMatch.registration_number} />
+                    <ReadOnly label="Form Four index number" value={rucuMatch.form_four_index_number} />
+                    <ReadOnly label="Programme" value={rucuMatch.programme} />
+                    <ReadOnly label="Year of study" value={rucuMatch.year_of_study} />
+                  </dl>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn-primary" disabled={busy !== null} onClick={() => void confirmRucuRecord()}>
+                      {busy === 'confirm' ? 'Confirming…' : 'Yes, this is my record - Continue'}
+                    </button>
+                    <button className="btn-outline" disabled={busy !== null} onClick={() => setRucuMatch(null)} type="button">
+                      Back to lookup
+                    </button>
+                  </div>
+                </div>
               ) : isRucu ? (
                 <div className="space-y-3">
                   <p className="text-sm text-slate-600">

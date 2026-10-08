@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 018 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 026 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 18 migrations' objects exist?
+-- 1. Do the required migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -20,6 +20,7 @@ with expected(grp, name) as (values
   ('table','loan_applications'), ('table','loans'), ('table','repayments'),
   ('table','collection_reminders'), ('table','app_settings'), ('table','loan_installments'),
   ('table','loan_documents'), ('table','application_status_history'),
+  ('table','rucu_confirmation_challenges'),
   ('function','handle_new_user'), ('function','guard_protected_columns'),
   ('function','trusted_write'), ('function','in_trusted_write'),
   ('function','search_rucu_student'), ('function','submit_verification'),
@@ -38,7 +39,9 @@ with expected(grp, name) as (values
   ('function','build_loan_schedule'), ('function','rebuild_loan_payments'), ('function','recalculate_loan'),
   ('function','reverse_repayment'), ('function','void_disbursement'), ('function','mark_loan_defaulted'),
   ('function','get_loan_schedule'), ('function','delete_my_account'),
-  ('function','verify_student_from_register'), ('function','declare_application_student'),
+  ('function','verify_student_from_register'), ('function','confirm_student_from_register'),
+  ('function','super_admin_mfa_satisfied'), ('function','record_super_admin_mfa_event'),
+  ('function','declare_application_student'),
   ('function','save_application_loan'), ('function','save_application_financial'),
   ('function','save_application_guarantor'),
   ('function','save_application_contact'), ('function','attach_application_document'),
@@ -697,14 +700,14 @@ select 'profiles_empty_phone', count(*)::text from public.student_profiles where
 -- 20. THE MANUAL PASS. None of the above proves the wizard works; only signing in as a student    
 --     does. Follow this before a real student is let near it.
 --
---   1. Sign up with a NEW phone number, a name and a four-digit PIN (e.g. 1234). You should land
+--   1. Sign up with a NEW phone number and a four-digit PIN (e.g. 1234). You should land
 --      straight on the dashboard, with no "confirm your phone" step and no email field at all.
 --      If you see a confirmation step, phone confirmation is still on — see README,
 --      "Turning off phone confirmation". If it refuses the PIN, Supabase's own minimum password
 --      length is still 6 — see the same README section.
 --   2. APPLY FOR LOAN -> Step 1. Choose Ruaha Catholic University, then a registration number and
---      last name that DO exist in rucu_students (RU/TEST/001/2024 / MWAKYUSA). You should see
---      the student found, read-only. No email address is asked for at any point.
+--      last name that DO exist in rucu_students (RU/TEST/001/2024 / MWAKYUSA). Review the returned
+--      read-only details and explicitly confirm they are yours before the application continues.
 --   3. On the same step, choose Mkwawa University College or Iringa University. The register fields
 --      must disappear and your own details must be asked for instead. Nothing may appear that
 --      looks like a lookup.
@@ -727,12 +730,50 @@ select 'profiles_empty_phone', count(*)::text from public.student_profiles where
 --      submission.
 --  11. Sign in as a student and try to open another student's application id directly. It must
 --      not load.
+--   12. Sign in as a SUPER_ADMIN. First use must show a TOTP setup QR; enroll an authenticator and
+--       verify its code. Sign out/in again: the admin pages must stay blocked until the next code
+--       succeeds. MANAGER logins must not be asked for MFA.
 --
 -- AND THE ONE THAT IS NO LONGER POSSIBLE:
---  12. In the browser console, as a signed-in student, call the RPC by hand:
+--   13. In the browser console, as a signed-in student, call the RPC by hand:
 --        await supabase.rpc('declare_application_student',
 --          { p_university: 'RUCU', p_full_name: 'ANYTHING', p_registration: 'ANYTHING',
 --            p_form_four_index: 'ANYTHING' })
 --      It must raise. Before migration 017 it returned an application id and wrote unverified RUCU
 --      details into the student's own profile.
 -- -------------------------------------------------------------------------------------
+
+-- -------------------------------------------------------------------------------------
+-- 21. Migrations 025 and 026: explicit RUCU confirmation and super-admin MFA.
+-- -------------------------------------------------------------------------------------
+select 'RUCU lookup does not set confirmation' as check,
+   case when p.prosrc not like '%student_confirmed_at%'
+      and p.prosrc not like '%update public.student_profiles%'
+    then 'PASS' else 'FAIL - lookup writes identity before the student confirms' end as result
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'verify_student_from_register'
+union all
+select 'RUCU confirmation writes confirmed identity',
+   case when p.prosrc like '%student_confirmed_at%'
+      and p.prosrc like '%rucu_confirmation_challenges%'
+    then 'PASS' else 'FAIL - explicit confirmation function is incomplete' end
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'confirm_student_from_register'
+union all
+select 'super-admin access checks MFA assurance',
+   case when p.prosrc like '%super_admin_mfa_satisfied%'
+    then 'PASS' else 'FAIL - is_admin() does not require aal2' end
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'is_admin'
+union all
+select 'MFA audit event RPC is authenticated-only',
+   case when has_function_privilege('authenticated', 'public.record_super_admin_mfa_event(text)', 'execute')
+      and not has_function_privilege('anon', 'public.record_super_admin_mfa_event(text)', 'execute')
+    then 'PASS' else 'FAIL - MFA audit event grants are wrong' end;
+
+select 'rucu_confirmation_challenges_rls' as check,
+   case when relrowsecurity then 'PASS' else 'FAIL - confirmation challenges have no RLS' end as result
+from pg_class where oid = 'public.rucu_confirmation_challenges'::regclass;
+
+-- Run supabase/authorization_matrix_tests.sql after this verifier. It impersonates a super admin
+-- at AAL1 and AAL2 and proves the former is blocked while the latter retains role-authorized access.

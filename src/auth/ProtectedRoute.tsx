@@ -1,6 +1,7 @@
 import { Navigate, Outlet, Link } from 'react-router-dom'
 import { useAuth } from './AuthContext'
 import { STAFF_ROLES } from '../config/site'
+import SuperAdminMfaGate from './SuperAdminMfaGate'
 
 /**
  * A UX guard only — the comment in 001_foundation.sql is right about that. Row Level Security and
@@ -47,6 +48,14 @@ export default function ProtectedRoute({ area }: { area: 'student' | 'admin' }) 
   // student link lands on the admin console instead of being told to log in again, and vice versa.
   const allowed = area === 'student' ? role === 'STUDENT' : (STAFF_ROLES as readonly string[]).includes(role)
   if (!allowed) return <Navigate to={role === 'STUDENT' ? '/dashboard' : '/admin'} replace />
+
+  if (area === 'admin' && role === 'SUPER_ADMIN') {
+    return (
+      <SuperAdminMfaGate>
+        <Outlet />
+      </SuperAdminMfaGate>
+    )
+  }
 
   return <Outlet />
 }

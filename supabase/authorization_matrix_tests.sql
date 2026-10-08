@@ -73,6 +73,8 @@ begin
     format('select public.set_user_role(%L::uuid, %L)', gen_random_uuid(), 'MANAGER'));
   perform pg_temp.expect_denied('student_cannot_void_disbursement',
     format('select public.void_disbursement(%L::uuid, %L)', gen_random_uuid(), 'test'));
+  perform pg_temp.expect_denied('student_cannot_confirm_rucu_without_match',
+    format('select public.confirm_student_from_register(%L, %L)', 'RU/NO-MATCH/000', 'NO-MATCH'));
 end $$;
 
 -- Direct table exposure: as a student, another student's rows must be invisible.
@@ -159,6 +161,47 @@ begin
 end $$;
 
 -- -------------------------------------------------------------------------------------
+-- SUPER_ADMIN: AAL1 is blocked; AAL2 unlocks only the actions its role already permits.
+-- -------------------------------------------------------------------------------------
+do $$
+declare v_admin uuid; v_student uuid; v_rows bigint;
+begin
+  select id into v_admin from public.users where role = 'SUPER_ADMIN' and status = 'ACTIVE' limit 1;
+  if v_admin is null then
+    insert into authz_test_results values ('super_admin_mfa', 'SKIP - no active super admin');
+    return;
+  end if;
+  select id into v_student from public.users where role = 'STUDENT' and status = 'ACTIVE' limit 1;
+  if v_student is null then
+    insert into authz_test_results values ('super_admin_mfa', 'SKIP - no active student for role-change test');
+    return;
+  end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_admin, 'role', 'authenticated', 'aal', 'aal1')::text, true);
+  perform pg_temp.expect_denied('super_admin_aal1_cannot_set_role',
+    format('select public.set_user_role(%L::uuid, %L)', v_student, 'MANAGER'));
+  perform pg_temp.expect_denied('super_admin_aal1_cannot_record_mfa_event',
+    'select public.record_super_admin_mfa_event(''SUPER_ADMIN_MFA_VERIFIED'')');
+  select count(*) into v_rows from public.audit_logs;
+  insert into authz_test_results values ('super_admin_aal1_cannot_read_admin_rows',
+    case when v_rows = 0 then 'PASS' else 'FAIL - saw ' || v_rows || ' rows' end);
+  select count(*) into v_rows from public.get_dashboard_stats();
+  insert into authz_test_results values ('super_admin_aal1_cannot_call_admin_reports',
+    case when v_rows = 0 then 'PASS' else 'FAIL - got ' || v_rows || ' rows' end);
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_admin, 'role', 'authenticated', 'aal', 'aal2')::text, true);
+  select count(*) into v_rows from public.list_staff();
+  insert into authz_test_results values ('super_admin_aal2_can_list_staff',
+    case when v_rows > 0 then 'PASS' else 'FAIL - no staff rows' end);
+  perform public.set_user_role(v_student, 'MANAGER');
+  insert into authz_test_results values ('super_admin_aal2_can_set_role', 'PASS');
+  perform public.record_super_admin_mfa_event('SUPER_ADMIN_MFA_VERIFIED');
+  insert into authz_test_results values ('super_admin_aal2_can_audit_mfa', 'PASS');
+end $$;
+
+-- -------------------------------------------------------------------------------------
 -- ANON: no function privileges on the internals, no rows in protected tables.
 -- -------------------------------------------------------------------------------------
 do $$
@@ -201,6 +244,14 @@ select 'grant_authenticated_rate_limit_count_revoked',
 union all
 select 'grant_authenticated_search_active_loans_allowed',
        case when has_function_privilege('authenticated', 'public.search_active_loans(text)', 'execute')
+            then 'PASS' else 'FAIL' end
+union all
+select 'grant_authenticated_confirm_student_from_register_allowed',
+       case when has_function_privilege('authenticated', 'public.confirm_student_from_register(text,text)', 'execute')
+            then 'PASS' else 'FAIL' end
+union all
+select 'grant_anon_confirm_student_from_register_revoked',
+       case when not has_function_privilege('anon', 'public.confirm_student_from_register(text,text)', 'execute')
             then 'PASS' else 'FAIL' end;
 
 select * from authz_test_results order by result desc, scenario;
