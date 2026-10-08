@@ -53,8 +53,8 @@ export default function AdminShell() {
   const { role, signOut } = useAuth()
   const nav = useNavigate()
 
-  const items = NAV.filter((i) => role && i.roles.includes(role))
-  const allowed = (label: string) => items.some((i) => i.label === label)
+  const items = role === 'SUPER_ADMIN' ? NAV : NAV.filter((i) => role && i.roles.includes(role))
+  const allowed = (label: string) => role === 'SUPER_ADMIN' || items.some((i) => i.label === label)
   const out = () => nav('/')
 
   return (

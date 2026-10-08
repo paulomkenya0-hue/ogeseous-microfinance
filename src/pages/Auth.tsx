@@ -304,7 +304,7 @@ export function Login() {
 export function Register() {
   const { session, role, loading } = useAuth()
   const nav = useNavigate()
-  const [f, setF] = useState({ name: '', phone: '', pw: '', pw2: '' })
+  const [f, setF] = useState({ phone: '', pw: '', pw2: '' })
   const [err, setErr] = useState<Errors>({})
   const [done, setDone] = useState(false)
   // const [needsConfirm] = useState(false)
@@ -320,8 +320,6 @@ export function Register() {
 
 
     const next: Errors = {}
-    if (f.name.trim().length < 3) next.name = 'Enter your full name'
-
     // isPhone and toE164 are checked separately on purpose. isPhone only asks "is this a number",
     // so the message can be about the number; toE164 then answers "can it be used as an account
     // identifier", which is a different question and gets a different message.
@@ -348,7 +346,7 @@ export function Register() {
     const { data, error } = await supabase.auth.signUp({
       email: phoneToAuthEmail(phone),
       password: pinToAuthPassword(f.pw),
-      options: { data: { full_name: f.name.trim(), phone } },
+      options: { data: { phone } },
     })
     setBusy(false)
 
@@ -418,7 +416,6 @@ export function Register() {
         You need one account only. If you have applied before, sign in instead of creating another.
       </p>
       <form onSubmit={submit} className="space-y-3" noValidate>
-        {field('name', 'Full Name', 'text', 'name')}
         {field('phone', 'Phone Number (required)', 'tel', 'tel')}
         {field('pw', '4-Digit PIN', 'password', 'new-password')}
         <p className="-mt-2 text-xs text-slate-500">{PW_HINT}</p>

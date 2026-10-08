@@ -523,9 +523,8 @@ export default function LoanWizard() {
       if (rows.length === 0) {
         return setErr({ form: 'Student record not found. Please check your registration number and last name.' })
       }
-      setNote(`Student found: ${rows[0].full_name}. These details come from the RUCU register and cannot be edited here.`)
+      setNote(`Student found: ${rows[0].full_name}. Review the details below and confirm they are yours before continuing.`)
       await load()
-      go(nextStep('student') ?? 'review')
       return
     }
 
@@ -880,6 +879,11 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
         >
           {confirmed ? (
             <>
+              {draft?.verification_method === 'RUCU_REGISTER' && (
+                <p className="mb-4 text-sm font-medium text-navy">
+                  Is this your student record? Check the details below, then confirm to continue.
+                </p>
+              )}
               <dl className="grid gap-4 sm:grid-cols-2">
                 <ReadOnly label="Full name" value={profile?.full_name} hint="From the register" />
                 <ReadOnly label="University" value={universityName(profile?.university)} />
@@ -902,7 +906,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
               </p>
               <div className="mt-4 flex gap-2">
                 <button className="btn-primary" onClick={() => go(nextStep('student') ?? 'contact')}>
-                  Continue
+                  {draft?.verification_method === 'RUCU_REGISTER' ? 'Yes, this is my record - Continue' : 'Continue'}
                 </button>
                 <button
                   className="btn-outline"
