@@ -58,7 +58,8 @@ Run these in the Supabase SQL editor, **in order**:
 | 023 | `023_fix_verification_requests_select.sql` | Restores the correct admin read policy for verification requests |
 | 024 | `024_rucu_register_admin_read.sql` | Limits RUCU register reads to managers and super admins |
 | 025 | `025_rucu_explicit_confirmation.sql` | Separates RUCU lookup from student confirmation; a short-lived match must be confirmed before a draft is created |
-| 026 | `026_super_admin_mfa.sql` | Requires aal2 for super-admin data and actions, while preserving each existing role check |
+| 026 | `026_super_admin_mfa.sql` | Historical migration; its unfinished MFA requirement is removed by migration 027 |
+| 027 | `027_remove_super_admin_mfa.sql` | Removes the unfinished MFA requirement and recursive policy; restores role-based admin access |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
@@ -87,12 +88,9 @@ These are project settings. No amount of editing `src/` will change any of them.
 | 1 | **Authentication → Providers → Email** | Leave the **Email** provider **ON** (it is by default) and **untick "Confirm email"** (or enable autoconfirm). With confirmation on, sign-up returns no session, so nobody lands on the dashboard after registering — and the synthetic address has no inbox to confirm through. |
 | 2 | **Authentication → Providers → Phone** | Leave the **Phone** provider **OFF**. The app does not use it; turning it on only opens an identity path nobody maintains. |
 | 3 | **Authentication → Sign In / Providers → Email → Minimum password length** | Set it to **4**. This no longer gates student registration (see below), but the staff password-reset page stores a password exactly as typed, and a four-digit staff password is refused by the server unless the minimum is 4. |
-| 4 | **Authentication → MFA** | Enable the **TOTP** factor. Super admins must enroll an authenticator app and verify a 6-digit code before admin access is granted. |
 
-Apply migrations through **026** before signing in as a super admin. The database checks the JWT
-assurance level (`aal2`) as well as the existing per-action role checks, so hiding the admin page in
-the browser is not the security boundary. Managers and other staff keep their existing role-based
-access. Successful super-admin enrollment and MFA verification are recorded in `audit_logs`.
+Apply migrations through **027** in order before signing in. Super-admin access uses the existing
+role-based authorization; the unfinished TOTP requirement has been removed.
 
 **Why registration no longer depends on setting 3.** A bare four-character PIN fails GoTrue's
 default minimum password length (6) before any code in this repository runs, and the rejection

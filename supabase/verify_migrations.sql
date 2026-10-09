@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 026 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 027 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -40,7 +40,6 @@ with expected(grp, name) as (values
   ('function','reverse_repayment'), ('function','void_disbursement'), ('function','mark_loan_defaulted'),
   ('function','get_loan_schedule'), ('function','delete_my_account'),
   ('function','verify_student_from_register'), ('function','confirm_student_from_register'),
-  ('function','super_admin_mfa_satisfied'), ('function','record_super_admin_mfa_event'),
   ('function','declare_application_student'),
   ('function','save_application_loan'), ('function','save_application_financial'),
   ('function','save_application_guarantor'),
@@ -730,9 +729,7 @@ select 'profiles_empty_phone', count(*)::text from public.student_profiles where
 --      submission.
 --  11. Sign in as a student and try to open another student's application id directly. It must
 --      not load.
---   12. Sign in as a SUPER_ADMIN. First use must show a TOTP setup QR; enroll an authenticator and
---       verify its code. Sign out/in again: the admin pages must stay blocked until the next code
---       succeeds. MANAGER logins must not be asked for MFA.
+--   12. Sign in as a SUPER_ADMIN and confirm the admin pages use the existing role-based access.
 --
 -- AND THE ONE THAT IS NO LONGER POSSIBLE:
 --   13. In the browser console, as a signed-in student, call the RPC by hand:
@@ -744,7 +741,7 @@ select 'profiles_empty_phone', count(*)::text from public.student_profiles where
 -- -------------------------------------------------------------------------------------
 
 -- -------------------------------------------------------------------------------------
--- 21. Migrations 025 and 026: explicit RUCU confirmation and super-admin MFA.
+-- 21. Migrations 025-027: explicit RUCU confirmation and removal of the unfinished MFA gate.
 -- -------------------------------------------------------------------------------------
 select 'RUCU lookup does not set confirmation' as check,
    case when p.prosrc not like '%student_confirmed_at%'
@@ -760,20 +757,13 @@ select 'RUCU confirmation writes confirmed identity',
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public' and p.proname = 'confirm_student_from_register'
 union all
-select 'super-admin access checks MFA assurance',
-   case when p.prosrc like '%super_admin_mfa_satisfied%'
-    then 'PASS' else 'FAIL - is_admin() does not require aal2' end
-from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-where n.nspname = 'public' and p.proname = 'is_admin'
-union all
-select 'MFA audit event RPC is authenticated-only',
-   case when has_function_privilege('authenticated', 'public.record_super_admin_mfa_event(text)', 'execute')
-      and not has_function_privilege('anon', 'public.record_super_admin_mfa_event(text)', 'execute')
-    then 'PASS' else 'FAIL - MFA audit event grants are wrong' end;
+select 'unfinished super-admin MFA functions removed',
+   case when to_regprocedure('public.super_admin_mfa_satisfied()') is null
+       and to_regprocedure('public.record_super_admin_mfa_event(text)') is null
+    then 'PASS' else 'FAIL - obsolete MFA functions remain' end;
 
 select 'rucu_confirmation_challenges_rls' as check,
    case when relrowsecurity then 'PASS' else 'FAIL - confirmation challenges have no RLS' end as result
 from pg_class where oid = 'public.rucu_confirmation_challenges'::regclass;
 
--- Run supabase/authorization_matrix_tests.sql after this verifier. It impersonates a super admin
--- at AAL1 and AAL2 and proves the former is blocked while the latter retains role-authorized access.
+-- Run supabase/authorization_matrix_tests.sql after this verifier to check role-based access.

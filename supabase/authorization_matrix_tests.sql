@@ -161,44 +161,29 @@ begin
 end $$;
 
 -- -------------------------------------------------------------------------------------
--- SUPER_ADMIN: AAL1 is blocked; AAL2 unlocks only the actions its role already permits.
+-- SUPER_ADMIN: role-based access remains available without an unfinished MFA gate.
 -- -------------------------------------------------------------------------------------
 do $$
 declare v_admin uuid; v_student uuid; v_rows bigint;
 begin
   select id into v_admin from public.users where role = 'SUPER_ADMIN' and status = 'ACTIVE' limit 1;
   if v_admin is null then
-    insert into authz_test_results values ('super_admin_mfa', 'SKIP - no active super admin');
+    insert into authz_test_results values ('super_admin_role_access', 'SKIP - no active super admin');
     return;
   end if;
   select id into v_student from public.users where role = 'STUDENT' and status = 'ACTIVE' limit 1;
   if v_student is null then
-    insert into authz_test_results values ('super_admin_mfa', 'SKIP - no active student for role-change test');
+    insert into authz_test_results values ('super_admin_role_access', 'SKIP - no active student for role-change test');
     return;
   end if;
 
   perform set_config('request.jwt.claims',
-    json_build_object('sub', v_admin, 'role', 'authenticated', 'aal', 'aal1')::text, true);
-  perform pg_temp.expect_denied('super_admin_aal1_cannot_set_role',
-    format('select public.set_user_role(%L::uuid, %L)', v_student, 'MANAGER'));
-  perform pg_temp.expect_denied('super_admin_aal1_cannot_record_mfa_event',
-    'select public.record_super_admin_mfa_event(''SUPER_ADMIN_MFA_VERIFIED'')');
-  select count(*) into v_rows from public.audit_logs;
-  insert into authz_test_results values ('super_admin_aal1_cannot_read_admin_rows',
-    case when v_rows = 0 then 'PASS' else 'FAIL - saw ' || v_rows || ' rows' end);
-  select count(*) into v_rows from public.get_dashboard_stats();
-  insert into authz_test_results values ('super_admin_aal1_cannot_call_admin_reports',
-    case when v_rows = 0 then 'PASS' else 'FAIL - got ' || v_rows || ' rows' end);
-
-  perform set_config('request.jwt.claims',
-    json_build_object('sub', v_admin, 'role', 'authenticated', 'aal', 'aal2')::text, true);
+    json_build_object('sub', v_admin, 'role', 'authenticated')::text, true);
   select count(*) into v_rows from public.list_staff();
-  insert into authz_test_results values ('super_admin_aal2_can_list_staff',
+  insert into authz_test_results values ('super_admin_can_list_staff',
     case when v_rows > 0 then 'PASS' else 'FAIL - no staff rows' end);
   perform public.set_user_role(v_student, 'MANAGER');
-  insert into authz_test_results values ('super_admin_aal2_can_set_role', 'PASS');
-  perform public.record_super_admin_mfa_event('SUPER_ADMIN_MFA_VERIFIED');
-  insert into authz_test_results values ('super_admin_aal2_can_audit_mfa', 'PASS');
+  insert into authz_test_results values ('super_admin_can_set_role', 'PASS');
 end $$;
 
 -- -------------------------------------------------------------------------------------
