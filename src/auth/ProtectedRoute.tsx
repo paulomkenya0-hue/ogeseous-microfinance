@@ -1,6 +1,6 @@
 import { Navigate, Outlet, Link } from 'react-router-dom'
 import { useAuth } from './AuthContext'
-import { STAFF_ROLES } from '../config/site'
+import { canAccessAdminArea } from '../config/site'
 
 /**
  * A UX guard only — the comment in 001_foundation.sql is right about that. Row Level Security and
@@ -45,7 +45,7 @@ export default function ProtectedRoute({ area }: { area: 'student' | 'admin' }) 
 
   // Each area sends you to the other one rather than to a dead end. A staff member who followed a
   // student link lands on the admin console instead of being told to log in again, and vice versa.
-  const allowed = area === 'student' ? role === 'STUDENT' : (STAFF_ROLES as readonly string[]).includes(role)
+  const allowed = area === 'student' ? role === 'STUDENT' : canAccessAdminArea(role)
   if (!allowed) return <Navigate to={role === 'STUDENT' ? '/dashboard' : '/admin'} replace />
 
   return <Outlet />

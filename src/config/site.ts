@@ -10,6 +10,36 @@
  * them from /admin/settings without a redeploy. The database copy is authoritative for anything a
  * manager may need to correct at short notice; this file is the fallback and the build-time copy.
  */
+
+export type Permission =
+  | 'dashboard.view'
+  | 'customers.view'
+  | 'customers.create'
+  | 'customers.update'
+  | 'applications.view'
+  | 'applications.create'
+  | 'applications.edit'
+  | 'applications.submit'
+  | 'applications.assess'
+  | 'applications.approve'
+  | 'loans.view'
+  | 'loans.create'
+  | 'loans.assess'
+  | 'loans.submit_for_approval'
+  | 'loans.approve'
+  | 'loans.disburse'
+  | 'repayments.view'
+  | 'repayments.record'
+  | 'repayments.reconcile'
+  | 'collections.manage'
+  | 'reports.view'
+  | 'reports.export'
+  | 'accounting.manage'
+  | 'bank_reconciliation.manage'
+  | 'users.manage'
+  | 'roles.manage'
+  | 'audit_logs.view'
+
 export const site = {
   name: 'OGESEOUS MICROFINANCE',
   tagline: 'Empowering Students, Building Futures',
@@ -72,7 +102,134 @@ export const FULL_ADMIN_ROLES: readonly StaffRole[] = [
   'SUPER_ADMIN',
 ]
 
+export const hasPermission = (
+  role: Role | null | undefined,
+  permission: Permission,
+): boolean => !!role && (ROLE_PERMISSIONS[role] as readonly Permission[]).includes(permission)
+
+export const hasAnyPermission = (
+  role: Role | null | undefined,
+  permissions: readonly Permission[],
+): boolean => !!role && permissions.some((permission) => hasPermission(role, permission))
+
+export const canAccessAdminArea = (role: Role | null | undefined): boolean =>
+  !!role && role !== 'STUDENT'
+
 export const canSeeFinancials = (role: Role | null | undefined) =>
   role === 'ACCOUNTANT' || role === 'MANAGER' || role === 'SUPER_ADMIN'
 
+export const canApproveLoans = (role: Role | null | undefined) =>
+  hasPermission(role, 'loans.approve')
+
+export const canDisburseLoans = (role: Role | null | undefined) =>
+  hasPermission(role, 'loans.disburse')
+
+export const canManageUsers = (role: Role | null | undefined) =>
+  hasPermission(role, 'users.manage')
+
 export const isSuperAdmin = (role: Role | null | undefined) => role === 'SUPER_ADMIN'
+
+export const ROLE_PERMISSIONS = {
+  STUDENT: ['customers.view', 'applications.view'] as const,
+  LOAN_OFFICER: [
+    'dashboard.view',
+    'customers.view',
+    'customers.create',
+    'customers.update',
+    'applications.view',
+    'applications.create',
+    'applications.edit',
+    'applications.submit',
+    'applications.assess',
+    'loans.view',
+    'loans.create',
+    'loans.assess',
+    'loans.submit_for_approval',
+    'repayments.view',
+    'collections.manage',
+    'reports.view',
+  ] as const,
+  ACCOUNTANT: [
+    'dashboard.view',
+    'loans.view',
+    'repayments.view',
+    'repayments.record',
+    'repayments.reconcile',
+    'reports.view',
+    'reports.export',
+    'accounting.manage',
+    'bank_reconciliation.manage',
+    'audit_logs.view',
+  ] as const,
+  COLLECTION_OFFICER: [
+    'dashboard.view',
+    'customers.view',
+    'loans.view',
+    'repayments.view',
+    'repayments.record',
+    'collections.manage',
+    'reports.view',
+  ] as const,
+  MARKETING_OFFICER: [
+    'dashboard.view',
+    'reports.view',
+  ] as const,
+  MANAGER: [
+    'dashboard.view',
+    'customers.view',
+    'customers.create',
+    'customers.update',
+    'applications.view',
+    'applications.create',
+    'applications.edit',
+    'applications.submit',
+    'applications.assess',
+    'applications.approve',
+    'loans.view',
+    'loans.create',
+    'loans.assess',
+    'loans.submit_for_approval',
+    'loans.approve',
+    'loans.disburse',
+    'repayments.view',
+    'repayments.record',
+    'repayments.reconcile',
+    'collections.manage',
+    'reports.view',
+    'reports.export',
+    'accounting.manage',
+    'bank_reconciliation.manage',
+    'users.manage',
+    'roles.manage',
+    'audit_logs.view',
+  ] as const,
+  SUPER_ADMIN: [
+    'dashboard.view',
+    'customers.view',
+    'customers.create',
+    'customers.update',
+    'applications.view',
+    'applications.create',
+    'applications.edit',
+    'applications.submit',
+    'applications.assess',
+    'applications.approve',
+    'loans.view',
+    'loans.create',
+    'loans.assess',
+    'loans.submit_for_approval',
+    'loans.approve',
+    'loans.disburse',
+    'repayments.view',
+    'repayments.record',
+    'repayments.reconcile',
+    'collections.manage',
+    'reports.view',
+    'reports.export',
+    'accounting.manage',
+    'bank_reconciliation.manage',
+    'users.manage',
+    'roles.manage',
+    'audit_logs.view',
+  ] as const,
+} as const satisfies Record<Role, readonly Permission[]>
