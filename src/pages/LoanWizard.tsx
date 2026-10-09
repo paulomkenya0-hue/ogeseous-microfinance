@@ -718,48 +718,82 @@ export default function LoanWizard() {
     }
     if (!draft) return setErr({ form: 'Your application could not be found. Please reload and try again.' })
 
-    // Re-save the current values first. Without this a student who edited a figure on step 3 and
-    // jumped straight to step 7 by clicking a completed step would submit the older numbers. Both
-    // saves are attempted; a failure in one is reported, because submitting figures the student has
-    // just corrected on screen but which the server never received would be worse than stopping.
-    const loanSave = await supabase.rpc('save_application_loan', {
-      p_amount: num(amount),
-      p_purpose: purpose || null,
-      p_purpose_other: purpose === 'OTHER' ? purposeOther.trim() : null,
-      p_repayment_months: months ? Number(months) : null,
-    })
-    if (loanSave.error) return setErr({ form: describeError(loanSave.error) })
-
-    const finSave = await supabase.rpc('save_application_financial', {
-      p_monthly_income: num(income),
-      p_income_source: incomeSource.trim(),
-      p_monthly_expenses: num(expenses),
-      p_has_support: hasSupport,
-      p_support_amount: hasSupport ? num(supportAmount) : null,
-      p_support_source: hasSupport ? supportSource.trim() : null,
-    })
-    if (finSave.error) return setErr({ form: describeError(finSave.error) })
-
     setBusy('submit')
-    const { data, error } = await supabase.rpc('submit_loan_application', {
-      p_id: draft.id,
-      p_terms_accepted: true,
-    })
-    setBusy(null)
-    if (error) return setErr({ form: describeError(error) })
+    try {
+      // The stepper permits returning to any earlier step, so persist every editable section from
+      // the current form before submitting rather than relying on the student to revisit each Save.
+      const contactSave = await supabase.rpc('save_application_contact', {
+        p_phone: phone.trim(),
+        p_address: address.trim(),
+        p_emergency_name: emName.trim(),
+        p_emergency_relationship: emRel.trim(),
+        p_emergency_phone: emPhone.trim(),
+      })
+      if (contactSave.error) {
+        setErr({ form: describeError(contactSave.error) })
+        return
+      }
 
-    // Prefer the number the database returned. Falling back to the draft's column covers only the
-    // case where the RPC returned no row despite succeeding, which should not happen; if it does,
-    // say so rather than navigating to a page that silently has nothing to show.
-    const row = (data ?? [])[0] as { application_number: string; status: string; submitted_at: string } | undefined
-    if (!row?.application_number) {
-      await load()
-      nav('/loan/application', { replace: true })
-      return
+      const loanSave = await supabase.rpc('save_application_loan', {
+        p_amount: num(amount),
+        p_purpose: purpose || null,
+        p_purpose_other: purpose === 'OTHER' ? purposeOther.trim() : null,
+        p_repayment_months: months ? Number(months) : null,
+      })
+      if (loanSave.error) {
+        setErr({ form: describeError(loanSave.error) })
+        return
+      }
+
+      const finSave = await supabase.rpc('save_application_financial', {
+        p_monthly_income: num(income),
+        p_income_source: incomeSource.trim(),
+        p_monthly_expenses: num(expenses),
+        p_has_support: hasSupport,
+        p_support_amount: hasSupport ? num(supportAmount) : null,
+        p_support_source: hasSupport ? supportSource.trim() : null,
+      })
+      if (finSave.error) {
+        setErr({ form: describeError(finSave.error) })
+        return
+      }
+
+      const guarantorSave = await supabase.rpc('save_application_guarantor', {
+        p_full_name: gName.trim(),
+        p_relationship: gRel.trim(),
+        p_phone: gPhone.trim(),
+        p_national_id: gId.trim(),
+        p_address: gAddress.trim(),
+      })
+      if (guarantorSave.error) {
+        setErr({ form: describeError(guarantorSave.error) })
+        return
+      }
+
+      const { data, error } = await supabase.rpc('submit_loan_application', {
+        p_id: draft.id,
+        p_terms_accepted: true,
+      })
+      if (error) {
+        setErr({ form: describeError(error) })
+        return
+      }
+
+      // The application number shown here must come from the committed database response.
+      const row = (data ?? [])[0] as { application_number: string; status: string; submitted_at: string } | undefined
+      if (!row?.application_number) {
+        await load()
+        nav('/loan/application', { replace: true })
+        return
+      }
+
+      setDirty(false)
+      setSubmitted({ number: row.application_number, at: row.submitted_at })
+    } catch (e) {
+      setErr({ form: describeError(e) })
+    } finally {
+      setBusy(null)
     }
-
-    setDirty(false)
-    setSubmitted({ number: row.application_number, at: row.submitted_at })
   }
 
   // -------------------------------------------------------------------------------------

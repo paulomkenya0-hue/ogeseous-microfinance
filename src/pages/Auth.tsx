@@ -117,20 +117,28 @@ export function Login() {
       // Staff sign in with the password exactly as it was set — no stretching. Their accounts are
       // ordinary email identities, created and reset through Supabase's own flows.
       setBusy(true)
-      const { error } = await supabase.auth.signInWithPassword({ email: id.trim(), password: pw })
-      setBusy(false)
-
-      if (error) {
-        if (isUnconfirmedAccount(error)) {
+      try {
+        const { error } = await supabase.auth.signInWithPassword({ email: id.trim(), password: pw })
+        if (error) {
+          if (isUnconfirmedAccount(error)) {
+            return setErr({
+              form: 'This account has not been confirmed yet. Please contact the OGESEOUS office.',
+            })
+          }
+          // Keep credential failures indistinguishable, but show operational errors such as rate
+          // limits and network failures so staff know the login service, not their password, failed.
           return setErr({
-            form: 'This account has not been confirmed yet. Please contact the OGESEOUS office.',
+            form: isRetryableSignInError(error)
+              ? 'That email and password do not match an account.'
+              : describeError(error),
           })
         }
-        // Deliberately vague: saying "no such account" would confirm which addresses are
-        // registered. It is the same message for a wrong password and an unknown identifier.
-        return setErr({ form: 'That email and password do not match an account.' })
+        nav('/admin')
+      } catch (e) {
+        setErr({ form: describeError(e) })
+      } finally {
+        setBusy(false)
       }
-      nav('/dashboard')
       return
     }
 
@@ -159,23 +167,28 @@ export function Login() {
     setBusy(true)
     let signedIn = false
     let failure: string | null = null
-    for (const credentials of attempts) {
-      const { error } = await supabase.auth.signInWithPassword(credentials)
-      if (!error) {
-        signedIn = true
-        break
+    try {
+      for (const credentials of attempts) {
+        const { error } = await supabase.auth.signInWithPassword(credentials)
+        if (!error) {
+          signedIn = true
+          break
+        }
+        if (isUnconfirmedAccount(error)) {
+          failure =
+            'Your account exists but has not been confirmed yet. Please contact the OGESEOUS office.'
+          break
+        }
+        if (!isRetryableSignInError(error)) {
+          failure = describeError(error)
+          break
+        }
       }
-      if (isUnconfirmedAccount(error)) {
-        failure =
-          'Your account exists but has not been confirmed yet. Please contact the OGESEOUS office.'
-        break
-      }
-      if (!isRetryableSignInError(error)) {
-        failure = describeError(error)
-        break
-      }
+    } catch (e) {
+      failure = describeError(e)
+    } finally {
+      setBusy(false)
     }
-    setBusy(false)
 
     if (signedIn) {
       // Navigate on the auth event rather than guessing a role here — ProtectedRoute picks the
