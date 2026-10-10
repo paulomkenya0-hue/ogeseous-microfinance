@@ -60,8 +60,14 @@ Run these in the Supabase SQL editor, **in order**:
 | 025 | `025_rucu_explicit_confirmation.sql` | Separates RUCU lookup from student confirmation; a short-lived match must be confirmed before a draft is created |
 | 026 | `026_super_admin_mfa.sql` | Historical migration; its unfinished MFA requirement is removed by migration 027 |
 | 027 | `027_remove_super_admin_mfa.sql` | Removes the unfinished MFA requirement and recursive policy; restores role-based admin access |
+| 028 | `028_add_ceo_role.sql` | Adds the distinct CEO staff role |
+| 029 | `029_strict_role_based_access_control.sql` | Enforces the strict role matrix, application workflow, restricted reporting, and server-side 403 guards |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
+Apply migrations **028 and 029 after 027**, in that order. Then run
+`supabase/authorization_matrix_tests.sql` in the Supabase SQL editor and confirm every applicable
+case reports `PASS`. This does not apply the migrations; frontend route guards and hidden navigation
+are not a substitute for database enforcement.
 
 After applying all of them, run `supabase/verify_migrations.sql`. It checks that every expected
 object exists, that `sum(repayments)` reconciles with disbursed minus outstanding, that
@@ -274,13 +280,23 @@ empty table.
 | `/loan/apply` | students — the seven-step wizard |
 | `/loan/application` | students — their own application, number, status, history |
 | `/loan/schedule` | students — installments, payments and balance |
-| `/admin/dashboard` | all staff |
-| `/admin/students` `/admin/audit-log` `/admin/settings` | MANAGER, SUPER_ADMIN (role assignment: SUPER_ADMIN only) |
-| `/admin/applications` `/admin/applications/:id` | LOAN_OFFICER, MANAGER, SUPER_ADMIN |
-| `/admin/loans` | LOAN_OFFICER, ACCOUNTANT, COLLECTION_OFFICER, MANAGER, SUPER_ADMIN |
-| `/admin/repayments` `/admin/collections` | ACCOUNTANT, COLLECTION_OFFICER, MANAGER, SUPER_ADMIN |
-| `/admin/reports` | ACCOUNTANT, MANAGER, SUPER_ADMIN |
-| `/admin/marketing` | MARKETING_OFFICER (own referrals only), MANAGER, SUPER_ADMIN |
+| `/admin/dashboard` | all staff, with role-filtered figures and shortcuts |
+| `/admin/students` | LOAN_OFFICER, MANAGER, SUPER_ADMIN |
+| `/admin/audit-log` `/admin/settings` | SUPER_ADMIN only |
+| `/admin/applications` `/admin/applications/:id` | LOAN_OFFICER, MANAGER, CEO, SUPER_ADMIN; Accountants receive approved-application context for disbursement |
+| `/admin/loans` | LOAN_OFFICER (active loans only), ACCOUNTANT (disbursement), MANAGER, CEO, SUPER_ADMIN |
+| `/admin/repayments` | ACCOUNTANT (entry), MANAGER and CEO (oversight), SUPER_ADMIN |
+| `/admin/collections` | COLLECTION_OFFICER, MANAGER, CEO (read-only arrears), SUPER_ADMIN |
+| `/admin/reports` | ACCOUNTANT, MANAGER, CEO, SUPER_ADMIN |
+| `/admin/marketing` | MARKETING_OFFICER (own referrals only), SUPER_ADMIN |
+
+Application flow: student submits; Loan Officer verifies and assesses; CEO makes the final approval
+decision (Managers retain operational approval authority); Accountant verifies the approved
+contract and disburses; Loan Officer records loan details and provides the schedule; Collection
+Officer follows arrears; Accountant records/reconciles payments; CEO reviews financial and overdue
+reports. Only SUPER_ADMIN manages system settings, staff roles, and audit logs. CEO leadership
+oversight includes institutional strategy, senior-staff coordination, objectives, stakeholder
+relationships, regulatory compliance, and major operating decisions.
 
 **Everyone signs in at `/login`.** There is deliberately no `/admin/login` form: a second sign-in
 page would be the same `signInWithPassword` against the same `auth.users`, so it would look stricter

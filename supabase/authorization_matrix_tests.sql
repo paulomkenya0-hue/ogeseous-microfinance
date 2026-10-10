@@ -35,7 +35,7 @@ begin
   on conflict (scenario) do update set result = excluded.result;
 exception when others then
   -- Role check passed means the error must be about the object, not permissions.
-  if sqlerrm ilike '%only %' or sqlerrm ilike '%permission denied%' then
+  if sqlstate = '42501' or sqlerrm ilike '%only %' or sqlerrm ilike '%permission denied%' then
     insert into authz_test_results values (p_scenario, 'FAIL - denied by role: ' || sqlerrm)
     on conflict (scenario) do update set result = excluded.result;
   else
@@ -100,7 +100,7 @@ end $$;
 -- LOAN_OFFICER: can review applications; cannot disburse, reverse, void, or set roles.
 -- -------------------------------------------------------------------------------------
 do $$
-declare v_officer uuid;
+declare v_officer uuid; v_rows bigint;
 begin
   select id into v_officer from public.users where role = 'LOAN_OFFICER' and status = 'ACTIVE' limit 1;
   if v_officer is null then
@@ -118,13 +118,19 @@ begin
     format('select public.set_user_role(%L::uuid, %L)', gen_random_uuid(), 'MANAGER'));
   perform pg_temp.expect_denied('loan_officer_cannot_record_repayment',
     format('select public.record_repayment(%L::uuid, 1, %L, null)', gen_random_uuid(), 'CASH'));
+  perform pg_temp.expect_denied('loan_officer_cannot_view_financial_reports',
+    'select * from public.get_dashboard_stats()');
+  perform pg_temp.expect_denied('loan_officer_cannot_approve_application',
+    format('select public.review_loan_application(%L::uuid, %L, %L)', gen_random_uuid(), 'APPROVED', 'ok'));
+  perform pg_temp.expect_allowed_error_is_not_permission('loan_officer_can_assess_application',
+    format('select public.review_loan_application(%L::uuid, %L, null)', gen_random_uuid(), 'UNDER_REVIEW'));
 end $$;
 
 -- -------------------------------------------------------------------------------------
--- COLLECTION_OFFICER: can record repayments; cannot reverse or change roles.
+-- COLLECTION_OFFICER: can handle arrears, but cannot record or inspect general repayments.
 -- -------------------------------------------------------------------------------------
 do $$
-declare v_col uuid;
+declare v_col uuid; v_rows bigint;
 begin
   select id into v_col from public.users where role = 'COLLECTION_OFFICER' and status = 'ACTIVE' limit 1;
   if v_col is null then
@@ -132,7 +138,7 @@ begin
     return;
   end if;
   perform set_config('request.jwt.claims', json_build_object('sub', v_col, 'role', 'authenticated')::text, true);
-  perform pg_temp.expect_allowed_error_is_not_permission('collection_officer_can_reach_record_repayment',
+  perform pg_temp.expect_denied('collection_officer_cannot_record_repayment',
     format('select public.record_repayment(%L::uuid, 1, %L, null)', gen_random_uuid(), 'CASH'));
   perform pg_temp.expect_denied('collection_officer_cannot_reverse',
     format('select public.reverse_repayment(%L::uuid, %L)', gen_random_uuid(), 'test'));
@@ -140,10 +146,50 @@ begin
     format('select public.set_user_role(%L::uuid, %L)', gen_random_uuid(), 'MANAGER'));
   perform pg_temp.expect_denied('collection_officer_cannot_disburse',
     format('select public.disburse_loan(%L::uuid, 1)', gen_random_uuid()));
+  select count(*) into v_rows from public.loans;
+  insert into authz_test_results values ('collection_officer_cannot_read_loans',
+    case when v_rows = 0 then 'PASS' else 'FAIL - saw ' || v_rows || ' loans' end);
+  select count(*) into v_rows from public.repayments;
+  insert into authz_test_results values ('collection_officer_cannot_read_general_repayments',
+    case when v_rows = 0 then 'PASS' else 'FAIL - saw ' || v_rows || ' repayments' end);
+  perform pg_temp.expect_allowed_error_is_not_permission('collection_officer_can_read_arrears',
+    'select * from public.list_arrears()');
+  perform pg_temp.expect_denied('collection_officer_cannot_view_financial_reports',
+    'select * from public.get_dashboard_stats()');
 end $$;
 
 -- -------------------------------------------------------------------------------------
--- MANAGER: financial operations allowed; still cannot change roles (SUPER_ADMIN only).
+-- ACCOUNTANT: financial reads, payment entry, and disbursement; no loan approvals or field collections.
+-- -------------------------------------------------------------------------------------
+do $$
+declare v_accountant uuid;
+begin
+  select id into v_accountant from public.users where role = 'ACCOUNTANT' and status = 'ACTIVE' limit 1;
+  if v_accountant is null then
+    insert into authz_test_results values ('accountant', 'SKIP - no active accountant');
+    return;
+  end if;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_accountant, 'role', 'authenticated')::text, true);
+  perform pg_temp.expect_allowed_error_is_not_permission('accountant_can_reach_disbursement',
+    format('select public.disburse_loan(%L::uuid, 1)', gen_random_uuid()));
+  perform pg_temp.expect_allowed_error_is_not_permission('accountant_can_reach_repayment_entry',
+    format('select public.record_repayment(%L::uuid, 1, %L, null)', gen_random_uuid(), 'CASH'));
+  perform pg_temp.expect_allowed_error_is_not_permission('accountant_can_view_financial_reports',
+    'select * from public.get_dashboard_stats()');
+  perform pg_temp.expect_denied('accountant_cannot_approve_application',
+    format('select public.review_loan_application(%L::uuid, %L, %L)', gen_random_uuid(), 'APPROVED', 'ok'));
+  perform pg_temp.expect_denied('accountant_cannot_review_student_verification',
+    format('select public.review_verification(%L::uuid, %L, null)', gen_random_uuid(), 'VERIFIED'));
+  select count(*) into v_rows from public.loans where status <> 'ACTIVE';
+  insert into authz_test_results values ('loan_officer_cannot_read_nonactive_loans',
+    case when v_rows = 0 then 'PASS' else 'FAIL - saw ' || v_rows || ' non-active loans' end);
+  perform pg_temp.expect_denied('accountant_cannot_manage_collections',
+    format('select public.mark_loan_defaulted(%L::uuid, %L)', gen_random_uuid(), 'test'));
+end $$;
+
+-- -------------------------------------------------------------------------------------
+-- MANAGER: operational oversight and approval; no system settings, role management,
+-- disbursement, or payment entry.
 -- -------------------------------------------------------------------------------------
 do $$
 declare v_mgr uuid;
@@ -158,6 +204,44 @@ begin
     format('select public.set_user_role(%L::uuid, %L)', gen_random_uuid(), 'MANAGER'));
   perform pg_temp.expect_allowed_error_is_not_permission('manager_can_reach_recalculate_loan',
     format('select public.recalculate_loan(%L::uuid)', gen_random_uuid()));
+  perform pg_temp.expect_denied('manager_cannot_change_settings',
+    format('select public.set_setting(%L, %L)', 'authz_test_setting', 'should be denied'));
+  perform pg_temp.expect_denied('manager_cannot_disburse',
+    format('select public.disburse_loan(%L::uuid, 1)', gen_random_uuid()));
+  perform pg_temp.expect_denied('manager_cannot_record_repayment',
+    format('select public.record_repayment(%L::uuid, 1, %L, null)', gen_random_uuid(), 'CASH'));
+  perform pg_temp.expect_allowed_error_is_not_permission('manager_can_view_operational_reports',
+    'select * from public.get_dashboard_stats()');
+end $$;
+
+-- -------------------------------------------------------------------------------------
+-- CEO: final approval and executive reports, but no verification operations or system admin.
+-- -------------------------------------------------------------------------------------
+do $$
+declare v_ceo uuid;
+begin
+  select id into v_ceo from public.users where role = 'CEO' and status = 'ACTIVE' limit 1;
+  if v_ceo is null then
+    insert into authz_test_results values ('ceo', 'SKIP - no active CEO');
+    return;
+  end if;
+  perform set_config('request.jwt.claims', json_build_object('sub', v_ceo, 'role', 'authenticated')::text, true);
+  perform pg_temp.expect_allowed_error_is_not_permission('ceo_can_reach_final_approval',
+    format('select public.review_loan_application(%L::uuid, %L, %L)', gen_random_uuid(), 'APPROVED', 'ok'));
+  perform pg_temp.expect_allowed_error_is_not_permission('ceo_can_view_financial_reports',
+    'select * from public.get_dashboard_stats()');
+  perform pg_temp.expect_denied('ceo_cannot_assess_instead_of_final_decision',
+    format('select public.review_loan_application(%L::uuid, %L, null)', gen_random_uuid(), 'UNDER_REVIEW'));
+  perform pg_temp.expect_denied('ceo_cannot_review_student_verification',
+    format('select public.review_verification(%L::uuid, %L, null)', gen_random_uuid(), 'VERIFIED'));
+  perform pg_temp.expect_denied('ceo_cannot_disburse',
+    format('select public.disburse_loan(%L::uuid, 1)', gen_random_uuid()));
+  perform pg_temp.expect_denied('ceo_cannot_record_repayment',
+    format('select public.record_repayment(%L::uuid, 1, %L, null)', gen_random_uuid(), 'CASH'));
+  perform pg_temp.expect_denied('ceo_cannot_change_settings',
+    format('select public.set_setting(%L, %L)', 'authz_test_setting', 'should be denied'));
+  perform pg_temp.expect_denied('ceo_cannot_set_staff_roles',
+    format('select public.set_user_role(%L::uuid, %L)', gen_random_uuid(), 'MANAGER'));
 end $$;
 
 -- -------------------------------------------------------------------------------------

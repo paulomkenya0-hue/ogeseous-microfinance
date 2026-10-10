@@ -43,10 +43,22 @@ export default function ProtectedRoute({ area }: { area: 'student' | 'admin' }) 
     )
   }
 
-  // Each area sends you to the other one rather than to a dead end. A staff member who followed a
-  // student link lands on the admin console instead of being told to log in again, and vice versa.
+  // A signed-in user in the wrong area receives an explicit authorization response rather than
+  // being redirected to a different page and left to infer that access was denied.
   const allowed = area === 'student' ? role === 'STUDENT' : canAccessAdminArea(role)
-  if (!allowed) return <Navigate to={role === 'STUDENT' ? '/dashboard' : '/admin'} replace />
+  if (!allowed) {
+    return (
+      <Centred>
+        <div>
+          <p className="text-sm font-bold uppercase tracking-wider text-red-700">403 · Unauthorized</p>
+          <h1 className="mt-2 text-xl font-bold text-navy">Access denied</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Your account does not have permission to access this area.
+          </p>
+        </div>
+      </Centred>
+    )
+  }
 
   return <Outlet />
 }

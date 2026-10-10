@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
 import { describeError, tzs } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { hasPermission } from '../config/site'
 import {
   Badge,
   Card,
@@ -41,6 +42,7 @@ const METHODS: [string, string][] = [
 
 export default function AdminRepayments() {
   const { role, session } = useAuth()
+  const canRecord = hasPermission(role, 'repayments.record')
   const canReverse = role === 'MANAGER' || role === 'SUPER_ADMIN'
 
   // Server-side loan search: matches loan ID prefix, application number, student name or
@@ -177,7 +179,7 @@ export default function AdminRepayments() {
       {msg && <p className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{msg}</p>}
 
       <Card
-        title="Record a repayment"
+        title={canRecord ? 'Record a repayment' : 'Active loans'}
         hint="Payments are allocated to the oldest unpaid installment first, then the loan balance and status are recalculated from the repayments table."
       >
         <div className="grid gap-3 sm:grid-cols-2">
@@ -228,7 +230,7 @@ export default function AdminRepayments() {
             </ul>
           )}
 
-          {current && (
+          {canRecord && current && (
             <p className="sm:col-span-2 text-xs text-slate-500">
               Selected loan {current.loan_id.slice(0, 8)} ({current.full_name ?? 'unnamed'}) —
               scheduled outstanding: <b>{tzs(remaining)}</b>. Nothing beyond that can be allocated.

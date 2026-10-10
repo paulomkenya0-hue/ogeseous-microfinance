@@ -21,8 +21,11 @@
 
 ---
 
-Nothing in this file has been deployed or penetration-tested. There is no network access in the
-environment this was written in. It is a checklist and an account of what the code already does.
+Nothing in this file has been deployed or penetration-tested. Migrations 028 and 029 are new and
+must be applied to Supabase before their RBAC controls are active. Run
+`supabase/authorization_matrix_tests.sql` after applying them and confirm the results before relying
+on the role restrictions. It is a checklist and an account of the code; frontend hiding alone is not
+server-side enforcement.
 
 ## Already in the code
 
@@ -39,14 +42,18 @@ environment this was written in. It is a checklist and an account of what the co
 - The `verification-documents` bucket is private; each student can read and write only their own
   folder. 011 adds MIME type and 5MB size constraints and a delete policy — previously only the
   folder path was checked, so a `passport.php.exe` and a 400MB archive both went through.
-- `audit_logs` records sensitive actions with the acting user and timestamp. Only managers and super
-  admins can read it; nothing writes to it except the server-side functions. It is now readable in
-  the app at **/admin/audit-log**, which it previously was not at all.
+- `audit_logs` records sensitive actions with the acting user and timestamp. After migration 029,
+  only active Super Admins can read it; writes remain limited to server-side functions. The route is
+  `/admin/audit-log`.
 - The anon key is the only Supabase key in the frontend (`src/lib/supabase.ts`).
 - `.env` is git-ignored; `.env.example` ships with empty values.
 - Role assignment is **SUPER_ADMIN only**, cannot be applied to your own account, and cannot demote
   the last active super admin — so a manager cannot mint a super admin or lock everyone out.
 - Suspension takes effect immediately: every function checks `status = 'ACTIVE'`, not just sign-in.
+- Migrations 028–029 add the CEO role and enforce the role-specific RLS/RPC boundaries for
+  application review, disbursement, repayments, collections, reporting, settings, and staff
+  administration. Loan Officers see active loans only; Collection Officers cannot read general
+  repayment or loan records; only Accountants and Super Admins can record repayments.
 - `delete_my_account()` refuses while any loan exists, because the institution's record of the debt
   must outlive the account. Migration 014 restates it, because the `ON DELETE CASCADE` from
   `public.users` now has much more to take with it — and restores the STUDENT-only check that a

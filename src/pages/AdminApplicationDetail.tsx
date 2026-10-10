@@ -3,9 +3,10 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { describeError, rpc, tzs } from '../lib/api'
 import { Badge, Card, ErrorNote, Money, Row, STATUS_TONE, dateTime, askReason, confirmAction } from '../components/ui'
-import { ROLE_LABELS, universityName, type Role } from '../config/site'
+import { hasPermission, ROLE_LABELS, universityName, type Role } from '../config/site'
 import { openDocument } from '../lib/storage'
 import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, monthLabel, purposeText, type AppDocType } from '../lib/application'
+import { useAuth } from '../auth/AuthContext'
 
 type Application = {
   id: string
@@ -86,6 +87,10 @@ const DECISIONS = [
  * than rendered as an empty page.
  */
 export default function AdminApplicationDetail() {
+  const { role } = useAuth()
+  const canApprove = hasPermission(role, 'applications.approve')
+  const canAssess = hasPermission(role, 'applications.assess')
+  const applicationsPath = hasPermission(role, 'applications.view') ? '/admin/applications' : '/admin/loans'
   const { id } = useParams<{ id: string }>()
   const [app, setApp] = useState<Application | null>(null)
   const [profile, setProfile] = useState<Applicant | null>(null)
@@ -188,8 +193,8 @@ export default function AdminApplicationDetail() {
           <p className="text-sm text-slate-600">
             {error || 'This application does not exist, or your role cannot read it.'}
           </p>
-          <Link className="btn-blue mt-4 inline-block" to="/admin/applications">
-            Back to applications
+          <Link className="btn-blue mt-4 inline-block" to={applicationsPath}>
+            {applicationsPath === '/admin/applications' ? 'Back to applications' : 'Back to disbursements'}
           </Link>
         </Card>
       </div>
@@ -203,8 +208,8 @@ export default function AdminApplicationDetail() {
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link to="/admin/applications" className="text-sm text-brand underline">
-            ← All applications
+          <Link to={applicationsPath} className="text-sm text-brand underline">
+            {applicationsPath === '/admin/applications' ? '← All applications' : '← Back to disbursements'}
           </Link>
           <h1 className="mt-1 font-mono text-2xl font-bold text-navy">
             {app.application_number ?? 'Draft — not submitted'}
@@ -231,11 +236,18 @@ export default function AdminApplicationDetail() {
           <p className="text-sm text-slate-600">
             {STATUS_EXPLAIN[app.status]} No further review decision can be made from this page.
           </p>
+        ) : !canApprove && !canAssess ? (
+          <p className="text-sm text-slate-600">
+            Read-only disbursement review. The CEO or a Manager makes the approval decision; this
+            account can verify the approval, contract details, and repayment terms before payment.
+          </p>
         ) : (
           <>
             <p className="text-sm text-slate-600">{STATUS_EXPLAIN[app.status]}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              {DECISIONS.map((d) => (
+              {DECISIONS.filter((d) =>
+                d.value === 'APPROVED' || d.value === 'REJECTED' ? canApprove : canAssess,
+              ).map((d) => (
                 <button
                   key={d.value}
                   className={`${d.tone} ${d.value === 'REJECTED' ? 'border border-red-300 text-red-700' : ''}`}

@@ -5,6 +5,8 @@ import { useAdminList } from '../lib/useAdminList'
 import { describeError } from '../lib/api'
 import { Badge, Card, Empty, ErrorNote, Money, PageHeader, Pager, STATUS_TONE, Table, askReason, confirmAction } from '../components/ui'
 import { STATUS_LABEL, purposeText as purpose } from '../lib/application'
+import { useAuth } from '../auth/AuthContext'
+import { hasPermission } from '../config/site'
 
 const PAGE_SIZE = 25
 
@@ -46,6 +48,9 @@ const FILTERS = [
  * and the financial picture are in front of the person making the call.
  */
 export default function AdminLoanApplications() {
+  const { role } = useAuth()
+  const canAssess = hasPermission(role, 'applications.assess')
+  const canApprove = hasPermission(role, 'applications.approve')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
 
@@ -125,7 +130,10 @@ export default function AdminLoanApplications() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Loan Applications" hint="Drafts are excluded until a student submits." />
+      <PageHeader
+        title="Loan Applications"
+        hint="Workflow: 01 Student submits → 02 Loan Officer verifies and assesses → 03 CEO approves or rejects (Manager may approve under delegated oversight) → 04 Accountant disburses → 05 Loan Officer confirms loan records and the repayment schedule is available to the student → 06 Collection Officer follows up under Loan Officer supervision; Marketing staff handle outreach separately → 07 Accountant records and reconciles payments → 08 CEO reviews financial and overdue-loan reports. Drafts are excluded until submitted."
+      />
 
       <Card hint="A draft saved by a student is not shown here — it has not been submitted yet.">
         <ErrorNote error={list.error || actionError} onRetry={list.reload} />
@@ -219,27 +227,33 @@ export default function AdminLoanApplications() {
                         >
                           Open
                         </Link>
-                        <button
-                          className="btn-primary px-2 py-1 text-xs"
-                          disabled={busyId === r.id}
-                          onClick={() => void act(r.id, 'APPROVED')}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="btn-outline px-2 py-1 text-xs"
-                          disabled={busyId === r.id || r.status === 'UNDER_REVIEW'}
-                          onClick={() => void act(r.id, 'ACTION_REQUIRED')}
-                        >
-                          Request info
-                        </button>
-                        <button
-                          className="btn border border-red-300 px-2 py-1 text-xs text-red-700"
-                          disabled={busyId === r.id}
-                          onClick={() => void act(r.id, 'REJECTED')}
-                        >
-                          Reject
-                        </button>
+                        {canApprove && (
+                          <>
+                            <button
+                              className="btn-primary px-2 py-1 text-xs"
+                              disabled={busyId === r.id}
+                              onClick={() => void act(r.id, 'APPROVED')}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              className="btn border border-red-300 px-2 py-1 text-xs text-red-700"
+                              disabled={busyId === r.id}
+                              onClick={() => void act(r.id, 'REJECTED')}
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                        {canAssess && (
+                          <button
+                            className="btn-outline px-2 py-1 text-xs"
+                            disabled={busyId === r.id || r.status === 'UNDER_REVIEW'}
+                            onClick={() => void act(r.id, 'ACTION_REQUIRED')}
+                          >
+                            Request info
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <Link className="text-xs text-brand underline" to={`/admin/applications/${r.id}`}>

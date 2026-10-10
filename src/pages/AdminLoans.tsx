@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAdminList } from '../lib/useAdminList'
 import { describeError } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { hasPermission } from '../config/site'
 import {
   Badge,
   Card,
@@ -32,6 +34,7 @@ type Loan = {
 
 export default function AdminLoans() {
   const { role } = useAuth()
+  const canDisburse = hasPermission(role, 'loans.disburse')
   const canVoid = role === 'MANAGER' || role === 'SUPER_ADMIN'
   const canRecalculate = canVoid
 
@@ -51,14 +54,15 @@ export default function AdminLoans() {
   )
 
   const loans = useAdminList<Loan>(
-    (from, to) =>
-      supabase
+    (from, to) => {
+      let query = supabase
         .from('loans')
         .select('id,application_id,principal_amount,outstanding_balance,status,disbursed_at,loan_installments(count)', {
           count: 'exact',
         })
-        .order('disbursed_at', { ascending: false })
-        .range(from, to),
+      if (role === 'LOAN_OFFICER') query = query.eq('status', 'ACTIVE')
+      return query.order('disbursed_at', { ascending: false }).range(from, to)
+    },
     PAGE_SIZE,
   )
 
@@ -139,7 +143,7 @@ export default function AdminLoans() {
       <ErrorNote error={actionError} />
       {notice && <p className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-800">{notice}</p>}
 
-      <Card title="Approved — awaiting disbursement">
+      {canDisburse && <Card title="Approved — awaiting disbursement">
         <ErrorNote error={approved.error} onRetry={approved.reload} />
         {approved.loading ? (
           <p className="text-slate-500">Loading…</p>
@@ -153,29 +157,38 @@ export default function AdminLoans() {
                   key={a.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 p-3 text-sm"
                 >
-                  <span className="font-mono text-xs">{a.application_number}</span>
+                  {hasPermission(role, 'applications.view') ||
+                  hasPermission(role, 'applications.disbursement_view') ? (
+                    <Link className="font-mono text-xs underline" to={`/admin/applications/${a.id}`}>
+                      {a.application_number} · Review approval and contract
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-xs">{a.application_number}</span>
+                  )}
                   <span className="text-slate-600">
                     Approved <Money value={a.amount} />
                   </span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="input w-36 py-1 text-sm"
-                      inputMode="numeric"
-                      value={amounts[a.id] ?? ''}
-                      placeholder={String(a.amount)}
-                      aria-label={`Disbursement amount for ${a.application_number}`}
-                      onChange={(e) =>
-                        setAmounts((prev) => ({ ...prev, [a.id]: e.target.value.replace(/[^\d]/g, '') }))
-                      }
-                    />
-                    <button
-                      className="btn-primary px-3 py-1 text-xs"
-                      disabled={busy === a.id}
-                      onClick={() => void disburse(a)}
-                    >
-                      {busy === a.id ? 'Disbursing…' : 'Disburse'}
-                    </button>
-                  </div>
+                  {canDisburse && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        className="input w-36 py-1 text-sm"
+                        inputMode="numeric"
+                        value={amounts[a.id] ?? ''}
+                        placeholder={String(a.amount)}
+                        aria-label={`Disbursement amount for ${a.application_number}`}
+                        onChange={(e) =>
+                          setAmounts((prev) => ({ ...prev, [a.id]: e.target.value.replace(/[^\d]/g, '') }))
+                        }
+                      />
+                      <button
+                        className="btn-primary px-3 py-1 text-xs"
+                        disabled={busy === a.id}
+                        onClick={() => void disburse(a)}
+                      >
+                        {busy === a.id ? 'Disbursing…' : 'Disburse'}
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -192,7 +205,7 @@ export default function AdminLoans() {
             </p>
           </>
         )}
-      </Card>
+      </Card>}
 
       <Card title="Disbursed loans">
         <ErrorNote error={loans.error} onRetry={loans.reload} />

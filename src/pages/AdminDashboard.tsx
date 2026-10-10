@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
+import { hasPermission } from '../config/site'
 import { describeError, rpc, rpcOne } from '../lib/api'
 import { Card, Empty, ErrorNote, Kpi, Money, PageHeader, Skeleton } from '../components/ui'
 import ImageCarousel from '../components/ImageCarousel'
@@ -50,17 +51,11 @@ export default function AdminDashboard() {
       setLoading(true)
       setError('')
 
-      const canSeeFinancials = role === 'ACCOUNTANT' || role === 'MANAGER' || role === 'SUPER_ADMIN'
-      const canSeeArrears =
-        role === 'ACCOUNTANT' || role === 'COLLECTION_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN'
-      const canSeeVerification = role === 'MANAGER' || role === 'SUPER_ADMIN'
-      const canSeeApplications = role === 'LOAN_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN'
-      const canSeeLoans =
-        role === 'LOAN_OFFICER' ||
-        role === 'ACCOUNTANT' ||
-        role === 'COLLECTION_OFFICER' ||
-        role === 'MANAGER' ||
-        role === 'SUPER_ADMIN'
+      const canSeeFinancials = hasPermission(role, 'reports.view')
+      const canSeeArrears = hasPermission(role, 'collections.view')
+      const canSeeVerification = hasPermission(role, 'customers.view')
+      const canSeeApplications = hasPermission(role, 'applications.view')
+      const canSeeLoans = hasPermission(role, 'loans.view')
 
       try {
         const settled = await Promise.allSettled([
@@ -152,7 +147,9 @@ export default function AdminDashboard() {
       <PageHeader
         title="Dashboard"
         hint={
-          role === 'LOAN_OFFICER'
+          role === 'CEO'
+            ? 'Executive oversight: loan approvals, portfolio performance, and overdue balances.'
+            : role === 'LOAN_OFFICER'
             ? 'Application queue and loans you are authorised to review.'
             : role === 'ACCOUNTANT'
               ? 'Portfolio totals and repayment figures from the live database.'
@@ -165,6 +162,20 @@ export default function AdminDashboard() {
       <ImageCarousel slides={HERO_SLIDES} />
       <MarqueeStrip cards={MARQUEE_CARDS} />
       <ErrorNote error={error} />
+
+      {role === 'CEO' && (
+        <Card title="Chief Executive Officer (CEO) — leadership mandate">
+          <ul className="grid gap-2 text-sm text-slate-700 md:grid-cols-2">
+            <li>Provide overall leadership and direction.</li>
+            <li>Develop and implement the institution's vision, mission, and strategy.</li>
+            <li>Supervise and coordinate senior staff.</li>
+            <li>Ensure the institution achieves its objectives.</li>
+            <li>Build relationships with customers, investors, and other stakeholders.</li>
+            <li>Ensure compliance with applicable laws and regulations.</li>
+            <li>Make major business and operating decisions.</li>
+          </ul>
+        </Card>
+      )}
 
       {!hasAnything ? (
         <Empty>Nothing on this dashboard applies to your role, or the data source is unavailable.</Empty>
@@ -261,27 +272,32 @@ export default function AdminDashboard() {
 
       <Card title="Shortcuts">
         <div className="flex flex-wrap gap-2">
-          {role === 'LOAN_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN' ? (
+          {hasPermission(role, 'applications.view') ? (
             <Link className="btn-blue" to="/admin/applications">
-              Review applications
+              {hasPermission(role, 'applications.approve') ? 'Review loan approvals' : 'Review applications'}
             </Link>
           ) : null}
-          {role === 'ACCOUNTANT' || role === 'COLLECTION_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN' ? (
+          {hasPermission(role, 'loans.disburse') ? (
+            <Link className="btn-outline" to="/admin/loans">
+              Disburse approved loans
+            </Link>
+          ) : null}
+          {hasPermission(role, 'repayments.record') ? (
             <Link className="btn-outline" to="/admin/repayments">
               Record a repayment
             </Link>
           ) : null}
-          {role === 'ACCOUNTANT' || role === 'COLLECTION_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN' ? (
+          {hasPermission(role, 'collections.view') ? (
             <Link className="btn-outline" to="/admin/collections">
-              Follow up arrears
+              {hasPermission(role, 'collections.manage') ? 'Follow up arrears' : 'Review overdue balances'}
             </Link>
           ) : null}
-          {role === 'ACCOUNTANT' || role === 'MANAGER' || role === 'SUPER_ADMIN' ? (
+          {hasPermission(role, 'reports.view') ? (
             <Link className="btn-outline" to="/admin/reports">
               Open reports
             </Link>
           ) : null}
-          {role === 'MARKETING_OFFICER' || role === 'MANAGER' || role === 'SUPER_ADMIN' ? (
+          {hasPermission(role, 'marketing.view') ? (
             <Link className="btn-outline" to="/admin/marketing">
               Marketing referrals
             </Link>

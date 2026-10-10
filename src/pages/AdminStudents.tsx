@@ -6,6 +6,7 @@ import { describeError } from '../lib/api'
 import { normalizeRucuStudentRow } from '../lib/rucuImport'
 import { Badge, Card, Empty, ErrorNote, Pager, STATUS_TONE, Table, askReason } from '../components/ui'
 import { universityName } from '../config/site'
+import { useAuth } from '../auth/AuthContext'
 
 const PAGE_SIZE = 25
 
@@ -32,6 +33,8 @@ type RucuStudent = {
 }
 
 export default function AdminStudents() {
+  const { role } = useAuth()
+  const canManageRegister = role === 'SUPER_ADMIN'
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState('')
 
@@ -157,6 +160,7 @@ export default function AdminStudents() {
 
   const rucuList = useAdminList<RucuStudent>(
     (from, to) => {
+      if (!canManageRegister) return Promise.resolve({ data: [], error: null, count: 0 })
       let query = supabase
         .from('rucu_students')
         .select(
@@ -189,9 +193,9 @@ export default function AdminStudents() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-navy">Students</h1>
 
-      <Card
+      {canManageRegister && <Card
         title="RUCU student register"
-        hint="The register is visible to active administrators. Students and ordinary staff cannot browse the full register."
+        hint="The student register is restricted to super administrators."
       >
         <div className="mb-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border bg-slate-50 p-4">
@@ -306,7 +310,7 @@ export default function AdminStudents() {
 
           <ErrorNote error={importErr} />
         </div>
-      </Card>
+      </Card>}
 
       <Card
         title="Verification requests"

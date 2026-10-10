@@ -6,9 +6,9 @@
  * site rendered as "To be provided by OGESEOUS" in the footer, the About page and the Contact
  * page. Those blanks are still visible to the public — fill them in before launch.
  *
- * The same values also live in the `app_settings` table (migration 011), where a manager can edit
- * them from /admin/settings without a redeploy. The database copy is authoritative for anything a
- * manager may need to correct at short notice; this file is the fallback and the build-time copy.
+ * The same values also live in the `app_settings` table (migration 011), where a Super Admin can
+ * edit them from /admin/settings without a redeploy. The database copy is authoritative for any
+ * corrections; this file is the fallback and the build-time copy.
  */
 
 export type Permission =
@@ -22,6 +22,7 @@ export type Permission =
   | 'applications.submit'
   | 'applications.assess'
   | 'applications.approve'
+  | 'applications.disbursement_view'
   | 'loans.view'
   | 'loans.create'
   | 'loans.assess'
@@ -32,8 +33,11 @@ export type Permission =
   | 'repayments.record'
   | 'repayments.reconcile'
   | 'collections.manage'
+  | 'collections.view'
   | 'reports.view'
   | 'reports.export'
+  | 'marketing.view'
+  | 'settings.view'
   | 'accounting.manage'
   | 'bank_reconciliation.manage'
   | 'users.manage'
@@ -77,6 +81,7 @@ export const STAFF_ROLES = [
   'COLLECTION_OFFICER',
   'MARKETING_OFFICER',
   'MANAGER',
+  'CEO',
   'SUPER_ADMIN',
 ] as const
 
@@ -90,6 +95,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   COLLECTION_OFFICER: 'Collections Officer',
   MARKETING_OFFICER: 'Marketing Officer',
   MANAGER: 'Manager',
+  CEO: 'Chief Executive Officer (CEO)',
   SUPER_ADMIN: 'Super Admin',
 }
 
@@ -98,7 +104,9 @@ export const FULL_ADMIN_ROLES: readonly StaffRole[] = [
   'LOAN_OFFICER',
   'ACCOUNTANT',
   'COLLECTION_OFFICER',
+  'MARKETING_OFFICER',
   'MANAGER',
+  'CEO',
   'SUPER_ADMIN',
 ]
 
@@ -116,10 +124,10 @@ export const canAccessAdminArea = (role: Role | null | undefined): boolean =>
   !!role && role !== 'STUDENT'
 
 export const canSeeFinancials = (role: Role | null | undefined) =>
-  role === 'ACCOUNTANT' || role === 'MANAGER' || role === 'SUPER_ADMIN'
+  role === 'ACCOUNTANT' || role === 'MANAGER' || role === 'CEO' || role === 'SUPER_ADMIN'
 
 export const canApproveLoans = (role: Role | null | undefined) =>
-  hasPermission(role, 'loans.approve')
+  hasPermission(role, 'applications.approve')
 
 export const canDisburseLoans = (role: Role | null | undefined) =>
   hasPermission(role, 'loans.disburse')
@@ -134,24 +142,15 @@ export const ROLE_PERMISSIONS = {
   LOAN_OFFICER: [
     'dashboard.view',
     'customers.view',
-    'customers.create',
-    'customers.update',
     'applications.view',
-    'applications.create',
-    'applications.edit',
-    'applications.submit',
     'applications.assess',
     'loans.view',
-    'loans.create',
-    'loans.assess',
-    'loans.submit_for_approval',
-    'repayments.view',
-    'collections.manage',
-    'reports.view',
   ] as const,
   ACCOUNTANT: [
     'dashboard.view',
     'loans.view',
+    'loans.disburse',
+    'applications.disbursement_view',
     'repayments.view',
     'repayments.record',
     'repayments.reconcile',
@@ -159,49 +158,40 @@ export const ROLE_PERMISSIONS = {
     'reports.export',
     'accounting.manage',
     'bank_reconciliation.manage',
-    'audit_logs.view',
   ] as const,
   COLLECTION_OFFICER: [
     'dashboard.view',
-    'customers.view',
-    'loans.view',
-    'repayments.view',
-    'repayments.record',
+    'collections.view',
     'collections.manage',
-    'reports.view',
   ] as const,
   MARKETING_OFFICER: [
     'dashboard.view',
-    'reports.view',
+    'marketing.view',
   ] as const,
   MANAGER: [
     'dashboard.view',
     'customers.view',
-    'customers.create',
-    'customers.update',
     'applications.view',
-    'applications.create',
-    'applications.edit',
-    'applications.submit',
     'applications.assess',
     'applications.approve',
     'loans.view',
-    'loans.create',
     'loans.assess',
-    'loans.submit_for_approval',
     'loans.approve',
-    'loans.disburse',
     'repayments.view',
-    'repayments.record',
-    'repayments.reconcile',
+    'collections.view',
     'collections.manage',
     'reports.view',
     'reports.export',
-    'accounting.manage',
-    'bank_reconciliation.manage',
-    'users.manage',
-    'roles.manage',
-    'audit_logs.view',
+  ] as const,
+  CEO: [
+    'dashboard.view',
+    'applications.view',
+    'applications.approve',
+    'loans.view',
+    'repayments.view',
+    'collections.view',
+    'reports.view',
+    'reports.export',
   ] as const,
   SUPER_ADMIN: [
     'dashboard.view',
@@ -223,9 +213,12 @@ export const ROLE_PERMISSIONS = {
     'repayments.view',
     'repayments.record',
     'repayments.reconcile',
+    'collections.view',
     'collections.manage',
     'reports.view',
     'reports.export',
+    'marketing.view',
+    'settings.view',
     'accounting.manage',
     'bank_reconciliation.manage',
     'users.manage',

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type ComponentType } from 'react'
 import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
-import { ROLE_LABELS, type Role } from '../config/site'
+import { hasPermission, ROLE_LABELS, type Permission } from '../config/site'
 import { Skeleton } from '../components/ui'
 import {
   IconAlert,
@@ -41,14 +41,14 @@ const Loading = () => (
 
 type Item = {
   label: string
-  roles: Role[]
+  permission: Permission
   path: string
   icon: ComponentType<{ className?: string }>
   group: 'Overview' | 'Lending' | 'Finance' | 'Operations'
 }
 
 /**
- * Mirrors the Row Level Security policies. Hiding a link is UX only.
+ * Mirrors the permission matrix. Database policies and RPC guards enforce the same access.
  */
 const NAV: Item[] = [
   {
@@ -56,53 +56,53 @@ const NAV: Item[] = [
     path: '/admin',
     icon: IconHome,
     group: 'Overview',
-    roles: ['LOAN_OFFICER', 'ACCOUNTANT', 'COLLECTION_OFFICER', 'MARKETING_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'dashboard.view',
   },
-  { label: 'Students', path: '/admin/students', icon: IconUsers, group: 'Lending', roles: ['MANAGER', 'SUPER_ADMIN'] },
+  { label: 'Students', path: '/admin/students', icon: IconUsers, group: 'Lending', permission: 'customers.view' },
   {
     label: 'Applications',
     path: '/admin/applications',
     icon: IconClipboard,
     group: 'Lending',
-    roles: ['LOAN_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'applications.view',
   },
   {
     label: 'Loans',
     path: '/admin/loans',
     icon: IconBank,
     group: 'Lending',
-    roles: ['LOAN_OFFICER', 'ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'loans.view',
   },
   {
     label: 'Repayments',
     path: '/admin/repayments',
     icon: IconWallet,
     group: 'Finance',
-    roles: ['ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'repayments.view',
   },
   {
     label: 'Collections',
     path: '/admin/collections',
     icon: IconAlert,
     group: 'Finance',
-    roles: ['ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'collections.view',
   },
   {
     label: 'Reports',
     path: '/admin/reports',
     icon: IconChart,
     group: 'Finance',
-    roles: ['ACCOUNTANT', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'reports.view',
   },
   {
     label: 'Marketing',
     path: '/admin/marketing',
     icon: IconMegaphone,
     group: 'Operations',
-    roles: ['MARKETING_OFFICER', 'MANAGER', 'SUPER_ADMIN'],
+    permission: 'marketing.view',
   },
-  { label: 'Audit Log', path: '/admin/audit-log', icon: IconShield, group: 'Operations', roles: ['MANAGER', 'SUPER_ADMIN'] },
-  { label: 'Settings', path: '/admin/settings', icon: IconCog, group: 'Operations', roles: ['MANAGER', 'SUPER_ADMIN'] },
+  { label: 'Audit Log', path: '/admin/audit-log', icon: IconShield, group: 'Operations', permission: 'audit_logs.view' },
+  { label: 'Settings', path: '/admin/settings', icon: IconCog, group: 'Operations', permission: 'settings.view' },
 ]
 
 const GROUPS: Item['group'][] = ['Overview', 'Lending', 'Finance', 'Operations']
@@ -126,8 +126,8 @@ export default function AdminShell() {
     })
   }
 
-  const items = role === 'SUPER_ADMIN' ? NAV : NAV.filter((i) => role && i.roles.includes(role))
-  const allowed = (label: string) => role === 'SUPER_ADMIN' || items.some((i) => i.label === label)
+  const items = NAV.filter((item) => hasPermission(role, item.permission))
+  const allowed = (permission: Permission) => hasPermission(role, permission)
   const out = () => nav('/')
 
   const NavList = ({ onNavigate }: { onNavigate?: () => void }) => (
@@ -159,7 +159,9 @@ export default function AdminShell() {
                     }
                   >
                     <Icon />
-                    {!collapsed && <span>{i.label}</span>}
+                    {!collapsed && (
+                      <span>{role === 'ACCOUNTANT' && i.label === 'Loans' ? 'Disbursements' : i.label}</span>
+                    )}
                   </NavLink>
                 )
               })}
@@ -241,34 +243,53 @@ export default function AdminShell() {
             <Routes>
               <Route index element={<AdminDashboard />} />
               <Route path="dashboard" element={<AdminDashboard />} />
-              <Route path="students" element={allowed('Students') ? <AdminStudents /> : <Navigate to="/admin" replace />} />
+              <Route path="students" element={allowed('customers.view') ? <AdminStudents /> : <AccessDenied />} />
               <Route
                 path="applications"
-                element={allowed('Applications') ? <AdminLoanApplications /> : <Navigate to="/admin" replace />}
+                element={allowed('applications.view') ? <AdminLoanApplications /> : <AccessDenied />}
               />
               <Route
                 path="applications/:id"
-                element={allowed('Applications') ? <AdminApplicationDetail /> : <Navigate to="/admin" replace />}
+                element={
+                  allowed('applications.view') || allowed('applications.disbursement_view')
+                    ? <AdminApplicationDetail />
+                    : <AccessDenied />
+                }
               />
               <Route path="loan-applications" element={<Navigate to="/admin/applications" replace />} />
-              <Route path="loans" element={allowed('Loans') ? <AdminLoans /> : <Navigate to="/admin" replace />} />
+              <Route path="loans" element={allowed('loans.view') ? <AdminLoans /> : <AccessDenied />} />
               <Route
                 path="repayments"
-                element={allowed('Repayments') ? <AdminRepayments /> : <Navigate to="/admin" replace />}
+                element={allowed('repayments.view') ? <AdminRepayments /> : <AccessDenied />}
               />
               <Route
                 path="collections"
-                element={allowed('Collections') ? <AdminCollections /> : <Navigate to="/admin" replace />}
+                element={allowed('collections.view') ? <AdminCollections /> : <AccessDenied />}
               />
-              <Route path="marketing" element={allowed('Marketing') ? <AdminMarketing /> : <Navigate to="/admin" replace />} />
-              <Route path="reports" element={allowed('Reports') ? <AdminReports /> : <Navigate to="/admin" replace />} />
-              <Route path="audit-log" element={allowed('Audit Log') ? <AdminAuditLog /> : <Navigate to="/admin" replace />} />
-              <Route path="settings" element={allowed('Settings') ? <AdminSettings /> : <Navigate to="/admin" replace />} />
+              <Route path="marketing" element={allowed('marketing.view') ? <AdminMarketing /> : <AccessDenied />} />
+              <Route path="reports" element={allowed('reports.view') ? <AdminReports /> : <AccessDenied />} />
+              <Route path="audit-log" element={allowed('audit_logs.view') ? <AdminAuditLog /> : <AccessDenied />} />
+              <Route path="settings" element={allowed('settings.view') ? <AdminSettings /> : <AccessDenied />} />
               <Route path="*" element={<Navigate to="/admin" replace />} />
             </Routes>
           </Suspense>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AccessDenied() {
+  return (
+    <div className="mx-auto max-w-xl rounded-2xl border border-red-200 bg-white p-8 text-center">
+      <p className="text-sm font-bold uppercase tracking-wider text-red-700">403 · Unauthorized</p>
+      <h1 className="mt-2 text-2xl font-bold text-navy">Access denied</h1>
+      <p className="mt-2 text-sm text-slate-600">
+        Your staff role does not have permission to view this page.
+      </p>
+      <NavLink className="btn-blue mt-5 inline-flex" to="/admin">
+        Back to dashboard
+      </NavLink>
     </div>
   )
 }

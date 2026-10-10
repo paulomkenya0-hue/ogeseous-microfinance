@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { describeError, rpc } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
+import { hasPermission } from '../config/site'
 import { Badge, Card, Empty, ErrorNote, Money, Table, askReason, date } from '../components/ui'
 
 type Row = {
@@ -24,7 +25,7 @@ type Row = {
  */
 export default function AdminCollections() {
   const { role } = useAuth()
-  const canDefault = role !== 'LOAN_OFFICER' && role !== 'MARKETING_OFFICER'
+  const canManage = hasPermission(role, 'collections.manage')
 
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
@@ -129,15 +130,15 @@ export default function AdminCollections() {
                   <Money value={r.amount_paid} /> of <Money value={r.total_due} />
                 </td>
                 <td className="py-2 pr-3">
-                  <div className="flex flex-wrap gap-1">
-                    <button
-                      className="btn-outline px-2 py-1 text-xs"
-                      disabled={busy === r.loan_id}
-                      onClick={() => void remind(r.loan_id)}
-                    >
-                      Log reminder
-                    </button>
-                    {canDefault && (
+                  {canManage && (
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        className="btn-outline px-2 py-1 text-xs"
+                        disabled={busy === r.loan_id}
+                        onClick={() => void remind(r.loan_id)}
+                      >
+                        Log reminder
+                      </button>
                       <button
                         className="btn border border-red-300 px-2 py-1 text-xs text-red-700"
                         disabled={busy === r.loan_id}
@@ -145,8 +146,8 @@ export default function AdminCollections() {
                       >
                         Flag default
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

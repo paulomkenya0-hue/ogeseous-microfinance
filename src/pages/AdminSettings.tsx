@@ -152,7 +152,7 @@ function validate(field: Field, raw: string): string | null {
 export default function AdminSettings() {
   const { role, session } = useAuth()
   const isSuperAdmin = role === 'SUPER_ADMIN'
-  const canEdit = role === 'MANAGER' || isSuperAdmin
+  const canEdit = isSuperAdmin
 
   const [settings, setSettings] = useState<Setting[]>([])
   const [draft, setDraft] = useState<Record<string, string>>({})
