@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { describeError, rpcOne } from '../lib/api'
-import { Card, Empty, ErrorNote, Money, Table } from '../components/ui'
+import { Card, Empty, ErrorNote, Kpi, Money, PageHeader, Table } from '../components/ui'
+import SimpleBars from '../components/SimpleBars'
 
 type Stats = {
   total_students: number
@@ -57,7 +58,7 @@ export default function AdminReports() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-navy">Reports</h1>
+      <PageHeader title="Reports" hint="Aggregate figures from the live database. Roles that cannot read these functions see an unavailable state, not zeros." />
       <ErrorNote error={error} onRetry={() => void load()} />
 
       {!stats ? (
@@ -71,22 +72,32 @@ export default function AdminReports() {
         <>
           <Card title="Money">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat label="Disbursed" value={<Money value={stats.total_disbursed} />} />
-              <Stat label="Collected" value={<Money value={stats.total_collected} />} />
-              <Stat label="Outstanding portfolio" value={<Money value={stats.outstanding_portfolio} />} />
-              <Stat label="Active loans" value={stats.active_loans} />
-              <Stat
+              <Kpi label="Disbursed" value={<Money value={stats.total_disbursed} />} />
+              <Kpi label="Collected" value={<Money value={stats.total_collected} />} />
+              <Kpi label="Outstanding portfolio" value={<Money value={stats.outstanding_portfolio} />} />
+              <Kpi label="Active loans" value={stats.active_loans} />
+              <Kpi
                 label="Overdue balance"
                 value={<Money value={stats.overdue_balance} />}
                 tone={Number(stats.overdue_balance) > 0 ? 'red' : undefined}
               />
-              <Stat
+              <Kpi
                 label="Loans in arrears"
                 value={stats.loans_in_arrears}
                 tone={stats.loans_in_arrears > 0 ? 'red' : undefined}
               />
-              <Stat label="Total scheduled" value={<Money value={stats.total_repayable} />} />
-              <Stat label="Interest billed" value={<Money value={stats.interest_billed} />} />
+              <Kpi label="Total scheduled" value={<Money value={stats.total_repayable} />} />
+              <Kpi label="Interest billed" value={<Money value={stats.interest_billed} />} />
+            </div>
+            <div className="mt-6">
+              <SimpleBars
+                items={[
+                  { label: 'Disbursed', value: Number(stats.total_disbursed) },
+                  { label: 'Collected', value: Number(stats.total_collected) },
+                  { label: 'Outstanding', value: Number(stats.outstanding_portfolio) },
+                  { label: 'Overdue', value: Number(stats.overdue_balance) },
+                ]}
+              />
             </div>
             <p className="mt-3 text-xs text-slate-500">
               "Total scheduled" is everything the generated installment schedules will ever collect;
@@ -98,11 +109,11 @@ export default function AdminReports() {
 
           <Card title="Applications">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Stat label="Total applications" value={stats.total_applications} />
-              <Stat label="Submitted" value={stats.submitted_applications} />
-              <Stat label="Awaiting disbursement" value={stats.approved_applications} />
-              <Stat label="Students (active)" value={stats.total_students} />
-              <Stat label="Verified students" value={stats.verified_students} />
+              <Kpi label="Total applications" value={stats.total_applications} />
+              <Kpi label="Submitted" value={stats.submitted_applications} />
+              <Kpi label="Awaiting disbursement" value={stats.approved_applications} />
+              <Kpi label="Students (active)" value={stats.total_students} />
+              <Kpi label="Verified students" value={stats.verified_students} />
             </div>
           </Card>
         </>
@@ -129,18 +140,3 @@ export default function AdminReports() {
     </div>
   )
 }
-
-const Stat = ({
-  label,
-  value,
-  tone,
-}: {
-  label: string
-  value: React.ReactNode
-  tone?: 'red'
-}) => (
-  <div className="rounded-lg border border-slate-200 p-3">
-    <p className="text-xs text-slate-500">{label}</p>
-    <p className={`mt-1 text-lg font-semibold ${tone === 'red' ? 'text-red-700' : 'text-navy'}`}>{value}</p>
-  </div>
-)

@@ -29,7 +29,11 @@ const ApplicationView = lazy(() => import('./pages/ApplicationView'))
 const StudentLoan = lazy(() => import('./pages/StudentLoan'))
 const AdminShell = lazy(() => import('./pages/Admin'))
 
-const Loading = () => <p className="p-10 text-center text-slate-500">Loading…</p>
+const Loading = () => (
+  <p className="p-10 text-center text-slate-500" role="status">
+    Loading…
+  </p>
+)
 
 const NotFound = () => (
   <div className="p-16 text-center">

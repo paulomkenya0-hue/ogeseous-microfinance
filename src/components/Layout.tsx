@@ -1,19 +1,21 @@
 import { useState } from 'react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { site } from '../config/site'
 import { useAuth } from '../auth/AuthContext'
+import { IconClose, IconMenu } from './icons'
 
 export function Logo({ light = false }: { light?: boolean }) {
+  const [broken, setBroken] = useState(false)
   return (
     <Link to="/" className="flex items-center gap-2" aria-label={site.name}>
-      {site.logoUrl ? (
-        <img src={site.logoUrl} alt="" className="h-9" />
+      {site.logoUrl && !broken ? (
+        <img src={site.logoUrl} alt="" className="h-9 w-auto rounded-md" onError={() => setBroken(true)} />
       ) : (
         <span
-          className="grid h-9 w-9 place-items-center rounded-lg border-2 border-dashed border-slate-400 text-[9px] text-slate-400"
-          title="Logo placeholder — set site.logoUrl in src/config/site.ts"
+          className="grid h-9 w-9 place-items-center rounded-lg bg-navy text-[10px] font-bold text-white"
+          title="Logo placeholder — add public/assets/ogeseous-logo.jpg"
         >
-          LOGO
+          OM
         </span>
       )}
       <span className={`text-sm font-extrabold tracking-wide ${light ? 'text-white' : 'text-navy'}`}>
@@ -43,12 +45,9 @@ export default function Layout() {
   const [open, setOpen] = useState(false)
   const { session, role, signOut } = useAuth()
   const nav = useNavigate()
+  const location = useLocation()
+  const isAdmin = location.pathname.startsWith('/admin')
 
-  /**
-   * The old expression was `role === 'STUDENT' ? '/student/dashboard' : '/admin'`, which sent
-   * signed-in users whose role had not loaded yet to /admin — and ProtectedRoute then bounced
-   * them straight back. Send them nowhere useful until the role is actually known.
-   */
   const home = !session ? '/login' : role === 'STUDENT' ? '/dashboard' : role ? '/admin' : '/'
 
   const signOutAndGo = async () => {
@@ -67,54 +66,62 @@ export default function Layout() {
         Skip to content
       </a>
 
-      <header className="sticky top-0 z-20 border-b bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Logo />
-          <nav className="hidden items-center gap-6 text-sm md:flex" aria-label="Main">
-            {links.map(([to, l]) => (
-              <NavLink
-                key={to}
-                to={to}
-                end
-                className={({ isActive }) =>
-                  isActive ? 'font-semibold text-brand' : 'text-slate-600 hover:text-navy'
-                }
-              >
-                {l}
-              </NavLink>
-            ))}
-            {session ? (
-              <>
-                <Link className="btn-blue" to={home}>
-                  Dashboard
-                </Link>
-                <button className="btn-outline" onClick={() => void signOutAndGo()}>
-                  Sign out
-                </button>
-              </>
-            ) : (
-              <>
-                <Link className="btn-outline" to="/login">
-                  Login
-                </Link>
-                <Link className="btn-primary" to="/register">
-                  Register
-                </Link>
-              </>
-            )}
-          </nav>
-          <button
-            className="rounded-lg p-2 md:hidden"
-            aria-expanded={open}
-            aria-label="Toggle menu"
-            onClick={() => setOpen(!open)}
-          >
-            {open ? '✕' : '☰'}
-          </button>
+          {!isAdmin && (
+            <nav className="hidden items-center gap-6 text-sm md:flex" aria-label="Main">
+              {links.map(([to, l]) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end
+                  className={({ isActive }) =>
+                    isActive ? 'font-semibold text-brand' : 'text-slate-600 hover:text-navy'
+                  }
+                >
+                  {l}
+                </NavLink>
+              ))}
+              {session ? (
+                <>
+                  <Link className="btn-blue" to={home}>
+                    Dashboard
+                  </Link>
+                  <button className="btn-outline" onClick={() => void signOutAndGo()}>
+                    Sign out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link className="btn-outline" to="/login">
+                    Login
+                  </Link>
+                  <Link className="btn-primary" to="/register">
+                    Register
+                  </Link>
+                </>
+              )}
+            </nav>
+          )}
+          {isAdmin ? (
+            <Link className="btn-outline py-2 text-xs" to="/">
+              Public site
+            </Link>
+          ) : (
+            <button
+              className="rounded-xl p-2 md:hidden"
+              aria-expanded={open}
+              aria-label="Toggle menu"
+              onClick={() => setOpen(!open)}
+            >
+              {open ? <IconClose /> : <IconMenu />}
+            </button>
+          )}
         </div>
 
-        {open && (
-          <nav className="space-y-1 border-t bg-white px-4 py-3 md:hidden" aria-label="Mobile">
+        {open && !isAdmin && (
+          <nav className="space-y-1 border-t bg-white/95 px-4 py-3 backdrop-blur md:hidden" aria-label="Mobile">
             {links.map(([to, l]) => (
               <Link
                 key={to}
@@ -154,28 +161,30 @@ export default function Layout() {
         <Outlet />
       </main>
 
-      <footer className="bg-navy text-slate-200">
-        <div className="mx-auto grid max-w-6xl gap-6 px-4 py-10 md:grid-cols-2">
-          <div>
-            <Logo light />
-            <p className="mt-2 text-sm">{site.tagline}</p>
-            {site.contact.email && <p className="mt-1 text-sm">{site.contact.email}</p>}
-            {site.contact.phone && <p className="text-sm">{site.contact.phone}</p>}
+      {!isAdmin && (
+        <footer className="bg-navy text-slate-200">
+          <div className="mx-auto grid max-w-6xl gap-6 px-4 py-10 md:grid-cols-2">
+            <div>
+              <Logo light />
+              <p className="mt-2 text-sm">{site.tagline}</p>
+              {site.contact.email && <p className="mt-1 text-sm">{site.contact.email}</p>}
+              {site.contact.phone && <p className="text-sm">{site.contact.phone}</p>}
+            </div>
+            <ul className="grid grid-cols-2 gap-2 text-sm">
+              {footerLinks.map(([to, l]) => (
+                <li key={to}>
+                  <Link className="hover:text-white" to={to}>
+                    {l}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="grid grid-cols-2 gap-2 text-sm">
-            {footerLinks.map(([to, l]) => (
-              <li key={to}>
-                <Link className="hover:text-white" to={to}>
-                  {l}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <p className="border-t border-white/10 py-4 text-center text-xs">
-          {site.copyright} · {site.developer}
-        </p>
-      </footer>
+          <p className="border-t border-white/10 py-4 text-center text-xs">
+            {site.copyright} · {site.developer}
+          </p>
+        </footer>
+      )}
     </div>
   )
 }

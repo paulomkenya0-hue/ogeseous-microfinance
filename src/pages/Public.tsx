@@ -2,6 +2,9 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { site } from '../config/site'
 import { isEmail, isPhone } from '../lib/validate'
+import ImageCarousel from '../components/ImageCarousel'
+import MarqueeStrip from '../components/MarqueeStrip'
+import { HERO_SLIDES, MARQUEE_CARDS } from '../config/banners'
 
 const Sec = ({ title, children }: { title: string; children: ReactNode }) => (
   <section className="mx-auto max-w-6xl px-4 py-12">
@@ -25,7 +28,7 @@ const FEATURES: [string, string][] = [
  * longer exists.
  */
 const STEPS: [string, string, string][] = [
-  ['01', 'Create an account', 'Register once with your name, email address, phone number and a password. There is no email confirmation step.'],
+  ['01', 'Create an account', 'Register once with your phone number and a four-digit PIN. Staff sign in with the email address they were issued.'],
   ['02', 'Find your student record', 'Enter your registration number and last name. RUCU students are matched against the register and their name, programme and year come back read-only. Students of the other universities enter their own details, and staff confirm them during review.'],
   ['03', 'Apply', 'A seven-step form: your record, the loan you need, your contact details, your finances, a guarantor, your documents, and a final review. You can stop and come back — nothing reaches OGESEOUS until you submit.'],
   ['04', 'Track', 'You are given an application number such as OGS-2026-000184. Follow it from your account, or from the public tracking page using that number together with your phone number.'],
@@ -34,10 +37,11 @@ const STEPS: [string, string, string][] = [
 export function Home() {
   return (
     <>
-      <section className="bg-gradient-to-br from-navy to-brand text-white">
-        <div className="mx-auto grid max-w-6xl items-center gap-8 px-4 py-16 md:grid-cols-2 md:py-24">
+      <section className="bg-gradient-to-br from-navy via-[#123a7a] to-brand text-white">
+        <div className="mx-auto grid max-w-6xl items-center gap-8 px-4 py-14 md:grid-cols-2 md:py-20">
           <div>
-            <h1 className="text-4xl font-extrabold leading-tight md:text-5xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-100">OGESEOUS Microfinance</p>
+            <h1 className="mt-2 text-4xl font-extrabold leading-tight md:text-5xl">
               Student Loans for a Brighter Future
             </h1>
             <p className="mt-4 text-blue-100">
@@ -53,16 +57,20 @@ export function Home() {
               </Link>
             </div>
           </div>
-          <div className="grid h-56 place-items-center overflow-hidden rounded-2xl bg-white md:h-72">
-            {/* The official logo, whole and uncropped — it carries its own light background. */}
+          <div className="grid min-h-56 place-items-center overflow-hidden rounded-3xl bg-white/90 p-6 shadow-lift backdrop-blur md:min-h-72">
             <img
               src={site.logoUrl}
               alt="OGESEOUS Microfinance — official logo"
-              className="h-full w-full object-contain"
+              className="max-h-64 w-full object-contain"
             />
           </div>
         </div>
       </section>
+
+      <div className="mx-auto max-w-6xl space-y-4 px-4 py-8">
+        <ImageCarousel slides={HERO_SLIDES} />
+        <MarqueeStrip cards={MARQUEE_CARDS} />
+      </div>
 
       <div id="why">
         <Sec title="Why Choose OGESEOUS">

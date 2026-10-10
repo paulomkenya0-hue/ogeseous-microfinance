@@ -33,15 +33,19 @@ const isUnconfirmedAccount = (error: AuthError): boolean =>
   error.code === 'email_not_confirmed' || /email not confirmed/i.test(error.message)
 
 const Box = ({ title, children }: { title: string; children: ReactNode }) => (
-  <div className="mx-auto max-w-md px-4 py-12">
-    <div className="card">
-      <h1 className="mb-4 text-2xl font-bold text-navy">{title}</h1>
-      {!configured && (
-        <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-          Database not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.
-        </p>
-      )}
-      {children}
+  <div className="relative overflow-hidden">
+    <div className="absolute inset-0 bg-gradient-to-br from-navy via-[#123a7a] to-brand" />
+    <div className="relative mx-auto max-w-md px-4 py-16">
+      <div className="card border-white/40 bg-white/90 shadow-lift backdrop-blur-md">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">OGESEOUS Microfinance</p>
+        <h1 className="mb-4 mt-1 text-2xl font-bold text-navy">{title}</h1>
+        {!configured && (
+          <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
+            Database not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env.
+          </p>
+        )}
+        {children}
+      </div>
     </div>
   </div>
 )

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="t d">
+  <title id="t">Education</title>
+  <desc id="d">Original OGESEOUS illustration of a campus and students</desc>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b2a5b"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="560" fill="url(#sky)"/>
+  <circle cx="980" cy="90" r="46" fill="#f8fafc" opacity="0.85"/>
+  <rect x="120" y="250" width="280" height="180" rx="8" fill="#e2e8f0"/>
+  <rect x="150" y="280" width="60" height="70" fill="#93c5fd"/>
+  <rect x="230" y="280" width="60" height="70" fill="#93c5fd"/>
+  <rect x="310" y="280" width="60" height="70" fill="#93c5fd"/>
+  <polygon points="120,250 260,170 400,250" fill="#f8fafc"/>
+  <rect x="500" y="300" width="220" height="130" rx="8" fill="#cbd5e1"/>
+  <rect x="530" y="330" width="50" height="50" fill="#bfdbfe"/>
+  <rect x="600" y="330" width="50" height="50" fill="#bfdbfe"/>
+  <circle cx="220" cy="460" r="22" fill="#fbbf24"/>
+  <rect x="206" y="480" width="28" height="50" fill="#1e3a8a"/>
+  <circle cx="320" cy="460" r="22" fill="#fdba74"/>
+  <rect x="306" y="480" width="28" height="50" fill="#0f172a"/>
+  <rect y="530" width="1200" height="30" fill="#0f172a" opacity="0.35"/>
+</svg>

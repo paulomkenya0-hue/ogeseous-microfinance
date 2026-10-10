@@ -1,6 +1,55 @@
 import type { ReactNode } from 'react'
 import { tzs } from '../lib/api'
 
+export const PageHeader = ({
+  title,
+  hint,
+  actions,
+}: {
+  title: string
+  hint?: ReactNode
+  actions?: ReactNode
+}) => (
+  <header className="flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">OGESEOUS</p>
+      <h1 className="text-2xl font-bold tracking-tight text-navy">{title}</h1>
+      {hint && <p className="mt-1 max-w-2xl text-sm text-slate-600">{hint}</p>}
+    </div>
+    {actions}
+  </header>
+)
+
+export const Kpi = ({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string
+  value: ReactNode
+  tone?: 'red' | 'amber' | 'green'
+  hint?: string
+}) => (
+  <div className="kpi motion-safe:animate-fade-up">
+    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+    <p
+      className={`mt-1 text-xl font-semibold tabular-nums ${
+        tone === 'red' ? 'text-overdue' : tone === 'amber' ? 'text-pending' : tone === 'green' ? 'text-success' : 'text-navy'
+      }`}
+    >
+      {value}
+    </p>
+    {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+  </div>
+)
+
+export const Skeleton = ({ className = 'h-24' }: { className?: string }) => (
+  <div
+    className={`rounded-2xl bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:400px_100%] motion-safe:animate-shimmer ${className}`}
+  />
+)
+
 export const Card = ({
   title,
   hint,
@@ -46,7 +95,9 @@ export const ErrorNote = ({ error, onRetry }: { error: string; onRetry?: () => v
   ) : null
 
 export const Empty = ({ children }: { children: ReactNode }) => (
-  <p className="text-slate-600">{children}</p>
+  <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+    {children}
+  </div>
 )
 
 export const TONE = {

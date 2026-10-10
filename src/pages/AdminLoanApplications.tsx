@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAdminList } from '../lib/useAdminList'
 import { describeError } from '../lib/api'
-import { Badge, Card, Empty, ErrorNote, Money, Pager, STATUS_TONE, Table, askReason, confirmAction } from '../components/ui'
+import { Badge, Card, Empty, ErrorNote, Money, PageHeader, Pager, STATUS_TONE, Table, askReason, confirmAction } from '../components/ui'
 import { STATUS_LABEL, purposeText as purpose } from '../lib/application'
 
 const PAGE_SIZE = 25
@@ -125,7 +125,7 @@ export default function AdminLoanApplications() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-navy">Loan Applications</h1>
+      <PageHeader title="Loan Applications" hint="Drafts are excluded until a student submits." />
 
       <Card hint="A draft saved by a student is not shown here — it has not been submitted yet.">
         <ErrorNote error={list.error || actionError} onRetry={list.reload} />
