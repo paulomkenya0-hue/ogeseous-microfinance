@@ -109,5 +109,17 @@ export function tzs(value: number | string | null | undefined): string {
 }
 
 export function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Dar_es_Salaam',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+
+  const parts = formatter.formatToParts(new Date()).reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = part.value
+    return acc
+  }, {})
+
+  return `${parts.year}-${parts.month}-${parts.day}`
 }

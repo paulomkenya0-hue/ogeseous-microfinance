@@ -165,6 +165,11 @@ describe('hasErrors', () => {
     expect(hasErrors({})).toBe(false)
   })
 
+  it('treats missing or nullish values as clear, not as a crash', () => {
+    expect(hasErrors({ email: undefined as unknown as string })).toBe(false)
+    expect(hasErrors({ email: null as unknown as string })).toBe(false)
+  })
+
   it('reports a field with a real message', () => {
     expect(hasErrors({ email: 'bad' })).toBe(true)
     expect(hasErrors({ email: '', pw: 'too short' })).toBe(true)

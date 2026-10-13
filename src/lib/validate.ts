@@ -1,4 +1,7 @@
-export const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
+export const isEmail = (v: string | null | undefined): boolean => {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
+}
 
 /**
  * Accepts the formats people actually type: spaces, dashes, brackets and a leading +.
@@ -10,8 +13,9 @@ export const isEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()
  *
  * The real check that a number is usable happens in toE164(), which normalises it.
  */
-export const isPhone = (v: string) => {
-  const d = v.replace(/\D/g, '')
+export const isPhone = (v: string | null | undefined): boolean => {
+  const s = typeof v === 'string' ? v : ''
+  const d = s.replace(/\D/g, '')
   return d.length >= 9 && d.length <= 15
 }
 
@@ -29,8 +33,8 @@ export const isPhone = (v: string) => {
  *
  * @returns the E.164 string, or null when the input is not a usable number
  */
-export function toE164(v: string): string | null {
-  const trimmed = v.trim()
+export function toE164(v: string | null | undefined): string | null {
+  const trimmed = typeof v === 'string' ? v.trim() : ''
   const d = trimmed.replace(/\D/g, '')
 
   // The same 9–15 digit window isPhone uses, on purpose. If this function were stricter than its
@@ -66,7 +70,10 @@ export function toE164(v: string): string | null {
  * it for a specific account. The bare PIN is never sent to the auth server — see pinToAuthPassword
  * below — so the server's own minimum password length no longer decides whether 1234 is accepted.
  */
-export const strongPw = (v: string) => /^\d{4}$/.test(v)
+export const strongPw = (v: string | null | undefined): boolean => {
+  const s = typeof v === 'string' ? v : ''
+  return /^\d{4}$/.test(s)
+}
 
 export const PW_HINT = '4 digits, numbers only'
 
@@ -92,7 +99,8 @@ export const PW_HINT = '4 digits, numbers only'
  */
 const PIN_AUTH_SUFFIX = '#ogeseous-PIN-pad'
 
-export const pinToAuthPassword = (pin: string): string => `${pin}${PIN_AUTH_SUFFIX}`
+export const pinToAuthPassword = (pin: string | null | undefined): string =>
+  `${typeof pin === 'string' ? pin : ''}${PIN_AUTH_SUFFIX}`
 
 /**
  * The synthetic auth email for a phone-identified student account.
@@ -106,8 +114,10 @@ export const pinToAuthPassword = (pin: string): string => `${pin}${PIN_AUTH_SUFF
  * Keep the format byte-for-byte stable: existing accounts carry this exact string as
  * auth.users.email, and changing it would strand them.
  */
-export const phoneToAuthEmail = (e164: string): string =>
-  `phone_${e164.replace(/[^0-9+]/g, '').replace(/\+/g, 'plus')}@ogeseous.local`
+export const phoneToAuthEmail = (e164: string | null | undefined): string => {
+  const raw = typeof e164 === 'string' ? e164 : ''
+  return `phone_${raw.replace(/[^0-9+]/g, '').replace(/\+/g, 'plus')}@ogeseous.local`
+}
 
 /** Shared shape for field-level validation errors. */
 export type Errors = Record<string, string>
@@ -121,4 +131,5 @@ export type Errors = Record<string, string>
  * key-count check and no visible reason why. Callers that clear a field should pass an empty
  * object instead.
  */
-export const hasErrors = (e: Errors) => Object.values(e).some((m) => m.trim() !== '')
+export const hasErrors = (e: Errors): boolean =>
+  Object.values(e).some((m) => typeof m === 'string' && m.trim() !== '')

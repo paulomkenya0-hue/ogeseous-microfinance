@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { describeError, pageRange, tzs, today } from './api'
 import { fileProblem, ownPaths, MAX_BYTES } from './storage'
 
@@ -89,6 +89,15 @@ describe('tzs', () => {
 describe('today', () => {
   it('returns an ISO date, which is what the date inputs expect', () => {
     expect(today()).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('uses East Africa Time rather than the machine UTC date', () => {
+    vi.setSystemTime(new Date('2025-01-01T23:30:00Z'))
+    try {
+      expect(today()).toBe('2025-01-02')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
