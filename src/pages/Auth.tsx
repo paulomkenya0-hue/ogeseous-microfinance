@@ -3,7 +3,16 @@ import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { supabase, configured } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
 import { describeError } from '../lib/api'
-import { isEmail, isPhone, toE164, strongPw, PW_HINT, hasErrors, type Errors } from '../lib/validate'
+import {
+  isEmail,
+  isPhone,
+  toE164,
+  strongPw,
+  studentPassword,
+  PW_HINT,
+  hasErrors,
+  type Errors,
+} from '../lib/validate'
 
 const Box = ({ title, children }: { title: string; children: ReactNode }) => (
   <div className="mx-auto max-w-md px-4 py-12">
@@ -93,19 +102,19 @@ export function Login() {
         setBusy(false)
         return setErr({ id: 'Enter a valid phone number, for example 0754 123 456.' })
       }
-      const { data: userData, error: lookupError } = await supabase
-        .from('users')
-        .select('email')
-        .eq('phone', phone)
-        .maybeSingle()
-      if (lookupError || !userData?.email) {
+      // This runs before a session exists, so public.users' RLS ("own row or admin") returns
+      // nothing to a direct table read. The security-definer RPC resolves one student's login
+      // email from the number without widening the table's SELECT policy to anon.
+      const { data: accountEmail, error: lookupError } = await supabase
+        .rpc('login_email_for_phone', { p_phone: phone })
+      if (lookupError || !accountEmail) {
         setBusy(false)
         setErr({
           form: 'That phone number and password do not match an account.',
         })
         return
       }
-      emailToUse = userData.email
+      emailToUse = accountEmail as string
     } else {
       if (!isEmail(id)) {
         setBusy(false)
@@ -123,7 +132,12 @@ export function Login() {
       })
       return
     }
-    const result = await supabase.auth.signInWithPassword({ email: emailToUse, password: pw })
+    // A student signs in with a phone number, and GoTrue only sees the padded PIN. A staff address
+    // is a real password and is sent unchanged.
+    const result = await supabase.auth.signInWithPassword({
+      email: emailToUse,
+      password: isPhoneLogin ? studentPassword(pw) : pw,
+    })
     setBusy(false)
 
     if (result.error) {
@@ -257,7 +271,6 @@ export function Register() {
   const nav = useNavigate()
   const [f, setF] = useState({ name: '', phone: '', pw: '', pw2: '' })
   const [err, setErr] = useState<Errors>({})
-  const [done, setDone] = useState(false)
   // const [needsConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -298,7 +311,7 @@ export function Register() {
 
     const { data, error } = await supabase.auth.signUp({
       email: syntheticEmail,
-      password: f.pw,
+      password: studentPassword(f.pw),
       options: { data: { full_name: f.name.trim(), phone } },
     })
     setBusy(false)
@@ -331,8 +344,21 @@ export function Register() {
     // A session here means the student is already signed in, and the Navigate above carries them
     // to their dashboard as soon as the role lookup settles — no page in between.
     if (!data?.session) {
-      // With email auth, no phone confirmation needed - try to sign in if possible
-      setDone(true)
+      // No session here means the project still requires email confirmation, or Supabase chose not
+      // to reveal that this synthetic address already exists. Try the credentials once: either the
+      // account is usable and we continue, or we can name the exact setting that is holding it.
+      const retry = await supabase.auth.signInWithPassword({
+        email: syntheticEmail,
+        password: studentPassword(f.pw),
+      })
+      if (retry.error) {
+        setErr({
+          form:
+            'Your account was created, but it cannot sign in because the project still requires email confirmation. The confirmation went to a synthetic @ogeseous.local address that nobody can receive. An administrator must turn "Confirm email" OFF (Supabase → Authentication → Providers → Email) and then confirm this account in the Supabase dashboard, or delete it so you can register again.',
+        })
+        return
+      }
+      nav('/dashboard', { replace: true })
       return
     }
     nav('/dashboard', { replace: true })
@@ -352,27 +378,6 @@ export function Register() {
       />
     </Field>
   )
-
-  if (done) {
-    return (
-      <Box title="Account created">
-        <p role="status" className="text-sm text-slate-700">
-          Account created successfully.
-        </p>
-
-
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <button className="btn-primary flex-1" onClick={() => nav('/dashboard', { replace: true })}>
-            [ Go to Dashboard ]
-          </button>
-          <Link className="btn-outline" to="/login">
-            Sign in
-          </Link>
-        </div>
-      </Box>
-    )
-  }
 
   return (
     <Box title="Create Student Account">

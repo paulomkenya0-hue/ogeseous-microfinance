@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { isEmail, isPhone, toE164, strongPw, PW_HINT, hasErrors } from './validate'
+import {
+  isEmail,
+  isPhone,
+  toE164,
+  strongPw,
+  studentPassword,
+  PIN_SUFFIX,
+  PW_HINT,
+  hasErrors,
+} from './validate'
 
 /**
  * These are the checks that stand between a typed form and the database.
  *
  * The password rule is the one that has moved most: it was "8 characters with a letter and a digit",
- * then 10 characters across three character classes, and is now four or more digits on explicit
+ * then 10 characters across three character classes, and is now exactly four digits on explicit
  * instruction from the business. The tests below are written against the rule that is actually
  * enforced, and state the examples the requirements named, because those are the cases that decide
  * whether a student can get an account at all.
@@ -44,6 +53,25 @@ describe('strongPw', () => {
   it('has a hint that matches what it enforces', () => {
     expect(PW_HINT.toLowerCase()).toContain('4')
     expect(PW_HINT.toLowerCase()).toContain('digit')
+  })
+})
+
+describe('studentPassword', () => {
+  /**
+   * Supabase Cloud refuses anything shorter than six characters and does not allow the dashboard
+   * to lower that to four. The four digits the student types are padded before they reach GoTrue;
+   * these tests pin the two properties that matter: the provider sees a long enough string, and
+   * the same PIN always produces the same credential.
+   */
+  it('takes a four-digit PIN over the provider minimum', () => {
+    expect(studentPassword('1234').length).toBeGreaterThanOrEqual(6)
+    expect(studentPassword('1234')).toBe(`1234${PIN_SUFFIX}`)
+  })
+
+  it('is deterministic and keeps different PINs apart', () => {
+    expect(studentPassword('1234')).toBe(studentPassword('1234'))
+    expect(studentPassword('1234')).not.toBe(studentPassword('4321'))
+    expect(studentPassword('0000')).not.toBe(studentPassword('0001'))
   })
 })
 

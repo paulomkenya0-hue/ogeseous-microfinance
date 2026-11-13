@@ -62,11 +62,26 @@ export function toE164(v: string): string | null {
  * only thing an attacker has to get right. Anyone can walk the four-digit space quickly if they
  * already know the number.
  *
- * This is a usability floor chosen by the business, not a security property. The app cannot raise
- * it for a specific account, and Supabase Auth's own minimum password length must be set to 4 as
- * well or it will reject 1234 before this code is ever reached.
+ * This is a usability floor chosen by the business, not a security property. Supabase Cloud does
+ * not allow the minimum password length to go below six, so the four digits are padded before they
+ * reach GoTrue (see studentPassword below). The padding is fixed and public: it adds no entropy,
+ * it only satisfies the provider's length check.
  */
 export const strongPw = (v: string) => /^\d{4}$/.test(v)
+
+/**
+ * The PIN that is actually sent to Supabase Auth.
+ *
+ * GoTrue on Supabase Cloud rejects any password shorter than six characters, and the dashboard
+ * will not lower that setting to four. The form still asks for exactly four digits; this suffix
+ * takes the string over the provider's limit. It is not a secret and does not make the PIN
+ * stronger — 10,000 possible PINs remain 10,000 — it exists only so the provider accepts it.
+ *
+ * Every student auth call (sign-up, sign-in, the post-signup retry) must use this function, and
+ * nothing else. Staff passwords are real passwords and must NOT be padded.
+ */
+export const PIN_SUFFIX = '#ogeseous-pin'
+export const studentPassword = (pin: string) => `${pin}${PIN_SUFFIX}`
 
 export const PW_HINT = '4 digits, numbers only'
 

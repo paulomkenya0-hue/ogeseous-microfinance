@@ -17,6 +17,13 @@ import { ROLE_LABELS, STAFF_ROLES, universityName } from '../config/site'
 import { APP_DOC_TYPES } from '../lib/application'
 
 type Setting = { key: string; value: string; updated_at: string; updated_by: string | null }
+type SettingChange = {
+  id: number
+  entity_id: string | null
+  metadata: { value?: string } | null
+  created_at: string
+  actor_id: string | null
+}
 type Staff = {
   id: string
   email: string
@@ -146,6 +153,7 @@ export default function AdminSettings() {
   const canEdit = role === 'MANAGER' || isSuperAdmin
 
   const [settings, setSettings] = useState<Setting[]>([])
+  const [history, setHistory] = useState<SettingChange[]>([])
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [fieldErr, setFieldErr] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -165,14 +173,21 @@ export default function AdminSettings() {
     setLoading(true)
     setError('')
     try {
-      const { data, error: e } = await supabase
-        .from('app_settings')
-        .select('key,value,updated_at,updated_by')
-        .order('key')
-      if (e) throw new Error(e.message)
-      const rows = (data ?? []) as Setting[]
+      const [settingsResult, historyResult] = await Promise.all([
+        supabase.from('app_settings').select('key,value,updated_at,updated_by').order('key'),
+        supabase
+          .from('audit_logs')
+          .select('id,entity_id,metadata,created_at,actor_id')
+          .eq('action', 'SETTING_CHANGED')
+          .order('created_at', { ascending: false })
+          .limit(50),
+      ])
+      if (settingsResult.error) throw new Error(settingsResult.error.message)
+      const rows = (settingsResult.data ?? []) as Setting[]
       setSettings(rows)
       setDraft(Object.fromEntries(rows.map((r) => [r.key, r.value])))
+      // History is decoration: a failure to read it must not blank the settings form.
+      setHistory(historyResult.error ? [] : ((historyResult.data ?? []) as SettingChange[]))
     } catch (err) {
       setError(describeError(err))
     } finally {
@@ -343,18 +358,19 @@ export default function AdminSettings() {
         </>
       )}
 
-      <Card title="Change history" hint="Every settings change is written to the audit log.">
-        {settings.length === 0 ? (
-          <Empty>No settings loaded.</Empty>
+      <Card title="Change history" hint="The audit log records each settings change. Current values are above.">
+        {history.length === 0 ? (
+          <Empty>No settings changes recorded yet.</Empty>
         ) : (
-          <Table head={['Key', 'Value', 'Last changed']}>
-            {settings.map((s) => (
-              <tr key={s.key} className="border-b last:border-0">
-                <td className="py-2 pr-3 font-mono text-xs">{s.key}</td>
-                <td className="py-2 pr-3">{s.value || <span className="text-slate-400">empty</span>}</td>
+          <Table head={['Key', 'New value', 'When', 'By']}>
+            {history.map((h) => (
+              <tr key={h.id} className="border-b last:border-0">
+                <td className="py-2 pr-3 font-mono text-xs">{h.entity_id ?? '—'}</td>
+                <td className="py-2 pr-3">{h.metadata?.value || <span className="text-slate-400">empty</span>}</td>
+                <td className="py-2 pr-3 text-xs text-slate-500">{dateTime(h.created_at)}</td>
                 <td className="py-2 pr-3 text-xs text-slate-500">
-                  {dateTime(s.updated_at)}
-                  {s.updated_by === session?.user.id ? ' (you)' : ''}
+                  {h.actor_id ? h.actor_id.slice(0, 8) : 'system'}
+                  {h.actor_id === session?.user.id ? ' (you)' : ''}
                 </td>
               </tr>
             ))}

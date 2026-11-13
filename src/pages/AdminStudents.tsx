@@ -42,7 +42,7 @@ export default function AdminStudents() {
       decision === 'REJECTED'
         ? askReason('Reason for rejection (this is shown to the student):')
         : undefined
-    if (decision === 'REJECTED' && reason === undefined) return
+    if (decision === 'REJECTED' && reason === null) return
 
     setBusyId(id)
     const { error } = await supabase.rpc('review_verification', {

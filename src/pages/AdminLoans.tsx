@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAdminList } from '../lib/useAdminList'
-import { describeError } from '../lib/api'
+import { describeError, tzs } from '../lib/api'
 import { useAuth } from '../auth/AuthContext'
 import {
   Badge,
@@ -88,7 +88,12 @@ export default function AdminLoans() {
       setActionError(describeError(error))
       return
     }
-    setNotice(`Disbursed ${a.application_number}. A repayment schedule has been generated for it.`)
+    const shortfall = Number(a.amount) - value
+    setNotice(
+      shortfall > 0
+        ? `Disbursed ${a.application_number} for ${tzs(value)} only. The loan and its schedule are for that amount; the remaining ${tzs(shortfall)} of the approved amount was NOT disbursed and will not be drawn later.`
+        : `Disbursed ${a.application_number}. A repayment schedule has been generated for it.`,
+    )
     setAmounts((prev) => ({ ...prev, [a.id]: '' }))
     approved.reload()
     loans.reload()
@@ -180,7 +185,9 @@ export default function AdminLoans() {
               ))}
             </ul>
             <p className="mt-2 text-xs text-slate-500">
-              A partial disbursement is allowed and the loan is created for that amount.{' '}
+              Entering less than the approved amount creates the loan for that smaller amount. The
+              remainder is not disbursed later — it is not a first tranche. Void the disbursement if
+              the amount was a mistake.{' '}
               {approved.pageable && (
                 <Pager
                   page={approved.page}

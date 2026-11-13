@@ -48,8 +48,15 @@ Run these in the Supabase SQL editor, **in order**:
 | 013 | `013_repayment_schedule.sql` | Installment schedules, reversals, recalculation |
 | 014 | `014_application_wizard.sql` | **The seven-step application wizard: RUCU lookup, loan documents, application numbers, public tracking** |
 | 015 | `015_register_lookup_fix.sql` | **Corrects two functions in 014 whose OUT parameter shadowed a column they read, which made the RUCU lookup raise on every call** |
-| 016 | `016_phone_signup.sql` | **Students register with a phone number and no email address. Makes `users.email` nullable and teaches the signup trigger about `auth.users.phone`** |
+| 016 | `016_phone_signup.sql` | Makes `users.email` nullable and starts the phone-aware signup trigger (partly superseded by 018) |
 | 017 | `017_no_rucu_self_declaration.sql` | **Closes a self-verification path: `declare_application_student` now refuses `RUCU`, so RUCU details can only come from the register** |
+| 018 | `018_auth_update_no_phone_auth.sql` | **Rewrites `handle_new_user()` for the synthetic-email signup: the phone is read from metadata as well as `auth.users.phone`, so `public.users.phone` is populated** |
+| 019 | `019_login_and_account_fixes.sql` | **Fixes the guarantor phone check, adds `login_email_for_phone()` for anonymous sign-in, repairs null phones, and makes account deletion remove the auth identity** |
+| 020 | `020_financial_hardening.sql` | **Staff-only schedule functions, DEFAULTED loans accept repayments, legacy loans get a schedule on first payment, and voiding a disbursement no longer fails on reversed repayment FKs** |
+| 021 | `021_security_cleanup.sql` | **Revokes the internal `trusted_write()` helpers from the public API, fixes the auth email sync under the guard, and makes the public tracking limit per application instead of global** |
+| 022 | `022_revoke_anon_function_execute.sql` | **Removes Supabase's default `anon` EXECUTE grant from every public function, then re-grants only the three public RPCs** |
+| 023 | `023_revoke_public_trigger_helpers.sql` | **Also removes the implicit PUBLIC grant that 022 missed on four trigger helpers; 024 restores the one RLS helper both client roles need** |
+| 024 | `024_restore_is_admin_execute.sql` | **Grants `is_admin()` back to `anon` and `authenticated`, because fifteen RLS policies call it as the querying role** |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
@@ -58,50 +65,57 @@ object exists, that `sum(repayments)` reconciles with disbursed minus outstandin
 `track_application` is callable by `anon` and nothing else is, and it lists any loans that still
 need a schedule (see the note below). Run it before any real money moves.
 
-### Students register with a phone number and a PIN — three Supabase settings you must change by hand
+### Students register with a phone number and a PIN — the Supabase settings that must be right
 
-**Supabase Auth cannot create a password account with neither an email address nor a phone number.**
-One of the two has to be the account identifier. Students are now created against the **phone
-number** (`signUp({ phone, password })`), so the signup form asks for a full name, a phone number
-and a four-digit PIN and nothing else. Staff are unaffected: they keep signing in with their email
-address, exactly as before, and the sign-in page tells them apart by whether what they typed
-contains an `@`.
+Students sign up with a full name, a phone number and a four-digit PIN. Supabase Auth still needs an
+email or phone identifier for a password account, and this project has neither an inbox nor an SMS
+provider. The client therefore creates the auth account with a **synthetic, undeliverable address**
+derived from the phone number (`phone_plus255…@ogeseous.local`). The real number is sent in the
+signup metadata and mirrored into `public.users.phone` by `handle_new_user()`; the sign-in page
+resolves it back to the identifier through `login_email_for_phone()` (019) before calling
+`signInWithPassword`. Staff are unaffected: they keep the email address they were issued, and the
+sign-in page tells the two apart by whether what was typed contains an `@`.
 
-These are project settings. No amount of editing `src/` will change any of them.
+These are project settings. Editing `src/` cannot change the first two.
 
 | # | Where | What |
 |---|---|---|
-| 1 | **Authentication → Providers → Phone** | Turn the **Phone** provider **ON**. Without it `signUp({ phone })` fails with "Phone logins are not enabled" and **no student can register at all**. |
-| 2 | **Authentication → Providers → Phone** | **Untick "Confirm phone".** With it on, sign-up returns no session, so nobody lands on the dashboard after registering. |
-| 3 | **Authentication → Sign In / Providers → Email → Minimum password length** | Set it to **4**. GoTrue rejects a shorter password *before* this app's own rule is consulted, so a four-digit PIN fails at the API while the form says it is acceptable. |
+| 1 | **Authentication → Providers → Email** | Keep the **Email** provider **ON**. The synthetic identity is an email identity to Supabase, so this is the provider signup and sign-in use. |
+| 2 | **Authentication → Providers → Email → Confirm email** | **OFF — this one is load-bearing.** With it on, GoTrue does not merely send an unreachable link: its mail path asks Supabase's email-validation service about the domain, and `@ogeseous.local` comes back as `Email address "…" is invalid`, so signup fails with a 400. With it off, no mail is sent and signup returns a session immediately. |
+| 3 | **Authentication → Sign In / Providers → Email → Minimum password length** | Leave it at **6** (the lowest Supabase Cloud allows). The form still asks for four digits; `studentPassword()` in `src/lib/validate.ts` appends a fixed, public suffix before the value reaches GoTrue. Trying to set the provider minimum to 4 will not work on Cloud. |
 
-Until settings 1 and 2 are done the signup form says so by name and gives the exact path, instead of
-leaving a student on a page telling them their account exists but will not open.
+The **Phone** provider is not used and does not need to be enabled.
 
-**Why 016 is needed and not just the form.** `public.users.email` was declared `text not null` in
-001. A student with no email has `auth.users.email = NULL`, so the `handle_new_user()` trigger's
-insert would fail on the not-null constraint and **no student account could ever be created**. 016
-drops that constraint — keeping the unique index, so two staff addresses still cannot collide — and
-rewrites the trigger to read `auth.users.phone`, which is the column GoTrue actually keeps unique.
-Role stays `STUDENT` and status stays `ACTIVE`; no existing account is touched.
+> Do not turn **Confirm email** back on. Student signup depends on its being off twice: the addresses
+> cannot receive mail, and the mail path is the only thing that rejects the `.local` domain. Turning
+> it on breaks the student form with `email_address_invalid`, not just the confirmation link.
+
+**Why 016, 018 and 019 are all needed.** 016 made `public.users.email` nullable and introduced the
+phone-aware signup trigger. 018 rewrites that trigger so the number is taken from
+`auth.users.phone` **or** the signup metadata — the metadata is what the current form sends, so
+without it every account got `public.users.phone = NULL`. 019 repairs the accounts created in that
+window, adds `login_email_for_phone()` so the pre-session lookup works under RLS, and makes account
+deletion remove the Supabase auth identity as well as the public row. Role stays `STUDENT` and
+status stays `ACTIVE` throughout; no existing account is promoted.
 
 **Password reset.** There is no self-service reset for a student, and the sign-in page says so
-rather than offering a button that does nothing. The Supabase client has no
-`resetPasswordForPhone`, and GoTrue has no password-reset-by-SMS endpoint the browser may call — a
-four-digit PIN on a phone-identified account is recoverable by an administrator and by nobody else.
-Staff still reset by email.
+rather than offering a button that does nothing. The account is identified by a synthetic address
+nobody can receive mail at, and the Supabase client has no `resetPasswordForPhone` — a four-digit
+PIN is recoverable by an administrator and by nobody else. Staff still reset by email.
 
 > A four-digit PIN has ten thousand possibilities, and the account is identified by a phone number,
 > which is the only thing an attacker has to get right. Anyone who already knows the number can walk
 > that space quickly. This is the rule the business asked for and it is implemented as asked; it is
-> recorded in `016_phone_signup.sql` so the choice is visible to whoever reads the schema next.
+> recorded in `016_phone_signup.sql` and `SECURITY.md` so the choice is visible to whoever reads the
+> schema next.
 
-### Turning off email confirmation
+### Email confirmation and the synthetic address
 
-Students no longer sign up with an email address, so email confirmation no longer affects them at
-all. **Staff** accounts still use an email identity, and **Confirm email** under **Authentication →
-Providers → Email** will still hold back a staff sign-up. Untick it, and lower the **Minimum
-password length** to 4 as set out in the table above.
+**Confirm email** must stay **OFF** (Authentication → Providers → Email). Students have no real
+inbox: a confirmation link would go to `@ogeseous.local` and the account would be stranded. Staff
+accounts use real addresses, but keeping one setting for both means the confirmation step must be
+off unless a staff-only signup flow is added later.
+
 
 ### What 011 fixed
 
@@ -135,10 +149,16 @@ reversed rows.
 New functions: `recalculate_loan`, `reverse_repayment`, `void_disbursement`, `mark_loan_defaulted`,
 `get_loan_schedule`.
 
-> **013 does not backfill schedules** for loans that already exist. They keep working, but they have
-> no installments, so they do not appear in arrears figures derived from the schedule.
-> `verify_migrations.sql` section 12 lists them. Run the backfill noted there, or leave them — but
-> know which is which before reporting on arrears.
+> **Schedules for loans that already existed.** 013 did not backfill them. Since 020, recording the
+> first repayment on a legacy loan with no payments builds its schedule automatically. A legacy loan
+> that already has payments needs a manager or super admin to run
+> `select public.build_loan_schedule('<loan_id>');`, which rebuilds the schedule and reallocates the
+> existing payments. `verify_migrations.sql` section 12 lists every loan still without installments.
+
+> **A partial disbursement is final.** If the amount entered is less than the approved amount, the
+> loan and its schedule are created for that smaller amount. The remainder is **not** a tranche and
+> cannot be drawn later; void the disbursement if the amount was a mistake. This is a confirmed
+> product decision, not a missing feature.
 
 ### Interest is off, on purpose
 
@@ -227,8 +247,8 @@ that token, so an old receipt cannot be replayed against a new application state
 3. Confirm the business settings on the same page: loan minimum and maximum, permitted terms, and —
    new in 014 — **guarantor required** and **required application documents**.
 4. Apply the **three Supabase settings** in "Students register with a phone number and a PIN" above
-   — enable the Phone provider, untick Confirm phone, and set the minimum password length to 4.
-   Until all three are done, **no student can register at all**.
+   — keep the Email provider on, turn **Confirm email off**, and set the minimum password length
+   to 4. With Confirm email on, a new student account is created but cannot be signed in to.
 5. Replace the placeholders in `src/config/site.ts` — logo, contact details.
 
 ---
@@ -281,6 +301,11 @@ every push to `master`. Three settings have to agree:
 
 Also set the Supabase Auth Site URL and Redirect URLs to the real domain, or password reset links
 will not come back to the app. See `SECURITY.md`.
+
+To move the app from one Supabase project to another (for example, handing it over to the
+institution's own account), follow `supabase/CLIENT_PROJECT_SETUP.md`. It covers the two environment
+variables, applying migrations 001–024 to the new project, the Auth settings, the first admin, and
+the storage/auth checks.
 
 ---
 

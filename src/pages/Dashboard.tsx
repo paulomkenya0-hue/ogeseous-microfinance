@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
 import { describeError, tzs } from '../lib/api'
@@ -119,7 +119,8 @@ function ReferralPrompt({ userId }: { userId: string }) {
  * for a student with no application at all.
  */
 export default function Dashboard() {
-  const { session } = useAuth()
+  const { session, signOut } = useAuth()
+  const nav = useNavigate()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
   const [application, setApplication] = useState<Application | null>(null)
@@ -151,7 +152,12 @@ export default function Dashboard() {
           .eq('user_id', uid)
           .order('created_at', { ascending: false })
           .limit(1),
-        supabase.from('loans').select('id,status,outstanding_balance').eq('user_id', uid).maybeSingle(),
+        supabase
+          .from('loans')
+          .select('id,status,outstanding_balance')
+          .eq('user_id', uid)
+          .order('created_at', { ascending: false })
+          .limit(1),
       ])
       // The profile is the one read that must succeed. The rest are decoration: failing them should
       // not blank the whole dashboard the way a single throw used to.
@@ -164,7 +170,11 @@ export default function Dashboard() {
       // ends up believing they are still under review. Only the newest row is read at all.
       const rows = (a.data ?? []) as Application[]
       setApplication(rows[0] ?? null)
-      setLoan(l.error ? null : ((l.data ?? null) as Loan))
+
+      // A student can have more than one loan over time (a closed one and a current one), which
+      // made maybeSingle() fail and hid the loan entirely. Show the newest.
+      const loanRows = (l.data ?? []) as Loan[]
+      setLoan(l.error ? null : (loanRows[0] ?? null))
     } catch (e) {
       setError(describeError(e))
     } finally {
@@ -185,8 +195,10 @@ export default function Dashboard() {
     setActionError('')
     const { error: e } = await supabase.rpc('delete_my_account')
     setDeleting(false)
-    if (e) setActionError(describeError(e))
-    else void load()
+    if (e) return setActionError(describeError(e))
+    // The auth identity is gone; drop the stale local session and leave the protected area.
+    await signOut()
+    nav('/login', { replace: true })
   }
 
   const resubmit = async () => {

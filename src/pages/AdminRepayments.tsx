@@ -14,7 +14,7 @@ import {
   dateTime,
 } from '../components/ui'
 
-type Loan = { id: string; outstanding_balance: number }
+type Loan = { id: string; outstanding_balance: number; status: string }
 type Repayment = {
   id: string
   amount: number
@@ -40,8 +40,8 @@ export default function AdminRepayments() {
     (from, to) =>
       supabase
         .from('loans')
-        .select('id,outstanding_balance', { count: 'exact' })
-        .eq('status', 'ACTIVE')
+        .select('id,outstanding_balance,status', { count: 'exact' })
+        .in('status', ['ACTIVE', 'DEFAULTED'])
         .order('outstanding_balance', { ascending: false })
         .range(from, to),
     100,
@@ -152,9 +152,9 @@ export default function AdminRepayments() {
         hint="Payments are allocated to the oldest unpaid installment first, then the loan balance and status are recalculated from the repayments table."
       >
         {loans.loading ? (
-          <p className="text-slate-500">Loading active loans…</p>
+          <p className="text-slate-500">Loading active and defaulted loans…</p>
         ) : loans.rows.length === 0 ? (
-          <Empty>No active loans to collect against.</Empty>
+          <Empty>No active or defaulted loans to collect against.</Empty>
         ) : (
           <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2" noValidate>
             <label className="block text-sm font-medium sm:col-span-2">
@@ -167,10 +167,11 @@ export default function AdminRepayments() {
                   setAmount('')
                 }}
               >
-                <option value="">Select an active loan</option>
+                <option value="">Select an active or defaulted loan</option>
                 {loans.rows.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.id.slice(0, 8)} — outstanding {tzs(l.outstanding_balance)}
+                    {l.status === 'DEFAULTED' ? ' (defaulted)' : ''}
                   </option>
                 ))}
               </select>

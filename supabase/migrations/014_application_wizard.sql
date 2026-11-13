@@ -624,7 +624,7 @@ begin
   if public.guarantor_is_required() then
     if length(trim(coalesce(p_full_name, ''))) < 3 then raise exception 'Enter your guarantor''s full name'; end if;
     if length(trim(coalesce(p_relationship, ''))) < 2 then raise exception 'State your relationship to the guarantor'; end if;
-    if coalesce(regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g'), '') < 9 then
+    if length(regexp_replace(coalesce(p_phone, ''), '[^0-9]', '', 'g')) < 9 then
       raise exception 'Enter a phone number we can reach the guarantor on';
     end if;
     if length(trim(coalesce(p_national_id, ''))) < 5 then raise exception 'Enter the guarantor''s National ID number'; end if;

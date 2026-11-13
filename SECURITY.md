@@ -33,7 +33,8 @@ environment this was written in. It is a checklist and an account of what the co
   after approval. Migration 011 adds a unique index on `(university, registration_number)` so one
   identity cannot hold two accounts.
 - Passwords are handled entirely by Supabase Auth. Nothing in `public.*` stores a raw password.
-  The client-side rule is at least 10 characters with upper case, lower case and a digit.
+  The client-side rule is exactly four digits (`strongPw` in `src/lib/validate.ts`), matching the
+  product decision recorded below — not the ten-character mixed-case rule of earlier revisions.
 - The `verification-documents` bucket is private; each student can read and write only their own
   folder. 011 adds MIME type and 5MB size constraints and a delete policy — previously only the
   folder path was checked, so a `passport.php.exe` and a 400MB archive both went through.
@@ -80,29 +81,37 @@ environment this was written in. It is a checklist and an account of what the co
 1. **Make the repository private.** The TODO at the top of this file.
 2. **Environment variables** — set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and
    `VITE_BASE_PATH` in your hosting provider's dashboard or repository secrets.
-3. **Supabase Auth settings — students register with a phone number and a four-digit PIN** (016).
-   Four values, all project settings that no code in this repository can change:
+3. **Supabase Auth settings — students sign in with a phone number and a four-digit PIN** (016/018/019).
+   Four project settings that no code in this repository can change:
 
-   - **Authentication → Providers → Phone → Phone provider: ON.** Without it `signUp({ phone })`
-     fails and *no student can register at all*.
-   - **Authentication → Providers → Phone → Confirm phone: OFF.** Otherwise sign-up returns no
-     session and nobody reaches the dashboard after registering.
-   - **Authentication → Sign In / Providers → Email → Minimum password length: 4.** GoTrue rejects a
-     shorter password before this app's own rule is consulted.
-   - **Authentication → Providers → Email → Confirm email: OFF.** This no longer affects students,
-     who have no email address. It still holds back a *staff* sign-up.
+   - **Authentication → Providers → Email: ON.** The synthetic address derived from the student's
+     phone number is an email identity to Supabase, so this is the provider used by signup and login.
+   - **Authentication → Providers → Email → Confirm email: OFF.** This is not only about undeliverable
+     mail. The synthetic addresses end in `@ogeseous.local`, and GoTrue's mail path runs the domain
+     through Supabase's email-validation service, which rejects `.local` with
+     `email_address_invalid`. With confirmation off the mail path is skipped and signup succeeds; with
+     it on, signup fails before the account exists. Do not re-enable it.
+   - **Authentication → Sign In / Providers → Email → Minimum password length: 6 or higher.** Supabase
+     Cloud will not go below six. The form still asks for four digits; `studentPassword()` in
+     `src/lib/validate.ts` appends a fixed, public suffix before the value reaches GoTrue. The suffix
+     adds no entropy — it only satisfies the provider's length check.
+   - **Authentication → Providers → Phone: not required.** No SMS is sent and `signUp({ phone })` is
+     not used. The number is stored as an attribute and resolved to the login identifier by
+     `login_email_for_phone()` (019).
 
-   Also set the Site URL and Redirect URLs to the real domain — email password reset depends on it.
+   Also set the Site URL and Redirect URLs to the real domain — staff email password reset depends
+   on it.
 
    **The credential itself, stated once.** A four-digit PIN has ten thousand possibilities, and a
-   student account is identified by a phone number rather than an email address, which means the
+   student account is identified by a phone number rather than a real email address, which means the
    number is the only secret an attacker has to guess alongside it. Anyone who knows a student's
    number can walk that space quickly, and no email confirmation or lockout stands in the way. This
    is the policy the business specified and it is implemented as specified; it is recorded here
    because the alternative — leaving the app enforcing a stronger rule than the account server —
-   produces a product that looks secure and is not. If that risk is not acceptable, the change that
-   reverses it is `strongPw` in `src/lib/validate.ts` **and** the Minimum password length setting;
-   the app-side rule alone is not enough, and it is not a boundary.
+   produces a product that looks secure and is not. The fixed suffix in `studentPassword()` does not
+   change this arithmetic: it is public, so the space is still 10,000. If that risk is not acceptable,
+   lengthen the PIN in `strongPw` and `studentPassword()` in `src/lib/validate.ts`; the app-side rule
+   alone is not enough, and it is not a boundary.
 4. **Confirm the business settings in /admin/settings.** The loan minimum, maximum and permitted
    terms ship as **unconfirmed defaults**, and the maximum is not a number anyone has agreed to. Set
    them before a student can see them on the application form. Migration 014 adds two more that are

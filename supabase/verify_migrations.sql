@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 017 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 024 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 17 migrations' objects exist?
+-- 1. Do all 24 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -38,6 +38,7 @@ with expected(grp, name) as (values
   ('function','build_loan_schedule'), ('function','rebuild_loan_payments'), ('function','recalculate_loan'),
   ('function','reverse_repayment'), ('function','void_disbursement'), ('function','mark_loan_defaulted'),
   ('function','get_loan_schedule'), ('function','delete_my_account'),
+  ('function','login_email_for_phone'),
   ('function','verify_student_from_register'), ('function','declare_application_student'),
   ('function','save_application_loan'), ('function','save_application_financial'),
   ('function','save_application_guarantor'),
@@ -51,7 +52,11 @@ with expected(grp, name) as (values
 select e.grp, e.name,
        case
          when e.grp = 'table' and to_regclass('public.'||e.name) is null then 'FAIL missing'
-         when e.grp = 'function' and to_regprocedure('public.'||e.name) is null then 'FAIL missing'
+         when e.grp = 'function' and not exists (
+           select 1 from pg_proc p
+           join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = e.name
+         ) then 'FAIL missing'
          when e.grp = 'index' and to_regclass('public.'||e.name) is null then 'FAIL missing'
          else 'PASS'
        end as result
@@ -312,7 +317,10 @@ limit 50;
 --     List them here, then handle each one deliberately: either void the disbursement and
 --     re-disburse so a schedule is generated, or agree a schedule with the student and call
 --         select public.build_loan_schedule('<loan_id>');
---     ...which is refused if the loan has payments against it. Settle or reverse those first.
+--     A manager or super admin may call it even when the loan already has payments: the schedule is
+--     rebuilt and those payments are reallocated. Other staff are refused once a live payment
+--     exists. Since 020, recording the first repayment on a legacy loan with no payments builds the
+--     schedule automatically.
 -- -------------------------------------------------------------------------------------
 select l.id, l.principal_amount, l.status, l.disbursed_at,
   (select count(*) from public.repayments r where r.loan_id = l.id and r.reversed_at is null) as repayments,
@@ -476,29 +484,35 @@ having count(*) > 1;
 --
 -- Run these as a STUDENT (set role / auth.uid()), because the function refuses anyone else.
 --
+-- 15a-15c are NOT executed by this file. A fresh handover has no student account and no
+-- RU/TEST fixture, so the function correctly refuses a null auth.uid() and the file would stop
+-- with "Not authenticated" for a reason that is not a defect. After the first students exist,
+-- run the three commented calls below in the SQL editor with a student JWT, or as a seeded
+-- student role. 15e is the static regression check and always runs.
+--
 -- 15a. MUST return exactly one row, with the authoritative values from rucu_students.
 --      An error here means 015 did not apply. ZERO rows means the register genuinely has no
 --      match — which is a data problem, not a code one, and is answered by 15c.
 -- -------------------------------------------------------------------------------------
-select public.verify_student_from_register('RU/TEST/001/2024', 'MWAKYUSA');
+-- select public.verify_student_from_register('RU/TEST/001/2024', 'MWAKYUSA');
 -- Expected: one row -> rucu_student_id set, full_name = 'JOHN MWAKYUSA',
 --           registration_number = 'RU/TEST/001/2024', programme not null, year_of_study not null.
 
 -- 15b. The same lookup, deliberately wrong in each way. Both MUST return zero rows, and neither
 --      may create a register row or an application.
-select 'wrong surname' as case, count(*) as rows_returned
-from public.verify_student_from_register('RU/TEST/001/2024', 'NOSUCHNAME')
-union all
-select 'wrong registration', count(*)
-from public.verify_student_from_register('RU/TEST/999/2024', 'MWAKYUSA')
-union all
-select 'correct registration, lower-cased surname', count(*)
-from public.verify_student_from_register('RU/TEST/001/2024', 'mwakyusa');
+-- select 'wrong surname' as case, count(*) as rows_returned
+-- from public.verify_student_from_register('RU/TEST/001/2024', 'NOSUCHNAME')
+-- union all
+-- select 'wrong registration', count(*)
+-- from public.verify_student_from_register('RU/TEST/999/2024', 'MWAKYUSA')
+-- union all
+-- select 'correct registration, lower-cased surname', count(*)
+-- from public.verify_student_from_register('RU/TEST/001/2024', 'mwakyusa');
 -- Expected: 0, 0, 1 — the comparison is case-insensitive, the inputs are not.
 
 -- 15c. Surrounding whitespace must not defeat the match. Expected: 1.
-select count(*) as rows_returned
-from public.verify_student_from_register('  RU/TEST/001/2024  ', '  MWAKYUSA  ');
+-- select count(*) as rows_returned
+-- from public.verify_student_from_register('  RU/TEST/001/2024  ', '  MWAKYUSA  ');
 
 -- 15d. A failed lookup must not have created anything. Expected: exactly the one pre-existing row.
 select count(*) as register_rows from public.rucu_students where registration_number = 'RU/TEST/001/2024';
@@ -527,12 +541,13 @@ where n.nspname = 'public'
 --     nullable and the signup trigger reads auth.users.phone. Read-only checks.
 -- -------------------------------------------------------------------------------------
 
--- 16a. The signup trigger must exist and must read the phone identity. If it is still the 001
---      version it only reads raw_user_meta_data, and public.users.phone stays empty for every
---      student. Expected: one row, PASS.
+-- 16a. The signup trigger must record the phone from BOTH possible locations: auth.users.phone
+--      (a phone identity) and raw_user_meta_data->>'phone' (the synthetic-email flow the current
+--      form uses). 016 read new.phone only, so metadata-only signups stored NULL. Expected: PASS.
 select case
-         when p.prosrc like '%new.phone%'                 then 'PASS'
-         else 'FAIL - handle_new_user does not read auth.users.phone'
+         when p.prosrc like '%new.phone%'
+          and p.prosrc like '%raw_user_meta_data->>''phone''%' then 'PASS'
+         else 'FAIL - handle_new_user ignores one of the two phone sources'
        end as result
 from pg_proc p
 join pg_namespace n on n.oid = p.pronamespace
@@ -569,16 +584,25 @@ select 'users_email_still_unique',
 select 'staff_without_email' as problem, u.id, u.role
 from public.users u where u.email is null and u.role <> 'STUDENT';
 
--- 16e. No placeholder email was invented from a phone number. Students are identified by phone;
---      there should be no address in the database that is really a phone number. Expected: zero rows.
-select 'synthesised_email' as problem, u.id, u.email
+-- 16e. The synthetic address is intentional in the current flow: students have no inbox. Check that
+--      it is derived from a known phone and that no other placeholder style appears. Expected: zero.
+select 'synthetic_email_without_phone' as problem, u.id, u.email
+from public.users u
+where u.email like '%@ogeseous.local' and u.phone is null;
+
+select 'unexpected_placeholder_email' as problem, u.id, u.email
 from public.users u
 where u.email ~ '^\+?[0-9]+@' or u.email like '%@phone%' or u.email like '%@student.invalid%';
 
--- 16f. Students created BEFORE 016 kept the email they signed up with; that is expected, not a
---      fault. Every student created AFTER 016 should have none. Read the counts: a rising
---      "students_without_email" column means signup is working. Expected: the column to be > 0
---      once new students have registered.
+-- 16f. A metadata-only signup before 018 stored NULL in users.phone while student_profiles kept the
+--      number. 019 backfills from the profile, so any remaining row here is a real gap. Expected: zero.
+select 'student_phone_not_backfilled' as problem, u.id, u.email, sp.phone
+from public.users u
+join public.student_profiles sp on sp.user_id = u.id
+where u.role = 'STUDENT' and u.phone is null and nullif(trim(sp.phone), '') is not null;
+
+-- 16g. Counts for context. students_with_email is expected to rise with synthetic addresses; the
+--      useful signal is that students_without_phone stays at zero for current signups.
 select count(*) filter (where email is null)     as students_without_email,
        count(*) filter (where email is not null) as students_with_email,
        count(*) filter (where phone is null)     as students_without_phone
@@ -637,10 +661,10 @@ where sp.university = 'RUCU' and r.id is null;
 --     does. Follow this before a real student is let near it.
 --
 --   1. Sign up with a NEW phone number, a name and a four-digit PIN (e.g. 1234). You should land
---      straight on the dashboard, with no "confirm your phone" step and no email field at all.
---      If you see a confirmation step, phone confirmation is still on — see README,
---      "Turning off phone confirmation". If it refuses the PIN, Supabase's own minimum password
---      length is still 6 — see the same README section.
+--      straight on the dashboard, with no confirmation step and no email field at all.
+--      If the account is created but sign-in is refused, "Confirm email" is still on — see
+--      README, "Email confirmation and the synthetic address". If it refuses the PIN, Supabase's
+--      own minimum password length is still above 4 — see the same README section.
 --   2. APPLY FOR LOAN -> Step 1. Choose Ruaha Catholic University, then a registration number and
 --      last name that DO exist in rucu_students (RU/TEST/001/2024 / MWAKYUSA). You should see
 --      the student found, read-only. No email address is asked for at any point.
@@ -674,4 +698,197 @@ where sp.university = 'RUCU' and r.id is null;
 --            p_form_four_index: 'ANYTHING' })
 --      It must raise. Before migration 017 it returned an application id and wrote unverified RUCU
 --      details into the student's own profile.
+
+
 -- -------------------------------------------------------------------------------------
+-- 19. Migration 019 — login lookup, guarantor validation and account deletion.
+-- -------------------------------------------------------------------------------------
+
+-- 19a. The guarantor phone check must compare a digit COUNT. The bug compared the text returned by
+--      regexp_replace with the integer 9, which raised on every call and blocked step 5. Expected PASS.
+select p.proname,
+       case when p.prosrc like '%length(regexp_replace%' then 'PASS'
+            else 'FAIL - text/integer comparison reintroduced in save_application_guarantor' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'save_application_guarantor';
+
+-- 19b. The phone lookup must be callable before a session exists. Expected PASS.
+select case
+         when has_function_privilege('anon', 'public.login_email_for_phone(text)', 'execute')
+         then 'PASS - anonymous login lookup is callable'
+         else 'FAIL - phone login cannot resolve an account'
+       end as result;
+
+-- 19c. It must return one text value, not expose the user row. Expected PASS.
+select case when p.prorettype = 'text'::regtype then 'PASS'
+            else 'FAIL - login_email_for_phone returns an unexpected type' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'login_email_for_phone';
+
+-- 19d. Both actor foreign keys must release the user on delete. A NO ACTION FK made
+--      delete_my_account() fail for every student who had ever written an audit row.
+select conrelid::regclass as table_name,
+       pg_get_constraintdef(oid) as definition,
+       case when pg_get_constraintdef(oid) like '%ON DELETE SET NULL%' then 'PASS'
+            else 'FAIL - this FK blocks account deletion' end as result
+from pg_constraint
+where conname in ('audit_logs_actor_id_fkey', 'application_status_history_actor_id_fkey')
+order by conname;
+
+-- 19e. Account deletion must remove the Supabase auth identity. Deleting only public.users left the
+--      login alive. Expected PASS.
+select case when p.prosrc like '%delete from auth.users%' then 'PASS'
+            else 'FAIL - auth identity survives delete_my_account()' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'delete_my_account';
+
+
+-- -------------------------------------------------------------------------------------
+-- 20. Financial hardening (020) — schedule authorization, defaulted/legacy repayments, voiding.
+-- -------------------------------------------------------------------------------------
+
+-- 20a. The two schedule helpers must carry the staff role guard. Expected PASS for both.
+select p.proname,
+       case when p.prosrc like '%Only finance or collections staff%' then 'PASS'
+            else 'FAIL - schedule helper is callable by any authenticated user' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('build_loan_schedule', 'rebuild_loan_payments')
+order by p.proname;
+
+-- 20b. record_repayment must accept DEFAULTED and must build a missing schedule for a legacy loan
+--      with no payments. Expected PASS.
+select case
+         when p.prosrc like '%not in (''ACTIVE'',''DEFAULTED'')%'
+          and p.prosrc like '%predates the repayment schedule%'
+         then 'PASS'
+         else 'FAIL - defaulted or legacy repayment path missing'
+       end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'record_repayment';
+
+-- 20c. rebuild_loan_payments must refuse a loan with no schedule instead of closing it silently.
+--      Expected PASS.
+select case when p.prosrc like '%no repayment schedule%' then 'PASS'
+            else 'FAIL - recalculate can still close a schedule-less loan' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'rebuild_loan_payments';
+
+-- 20d. A voided loan must not be blocked by its reversed repayments. loan_id is nullable, the FK
+--      releases it, and only reversed rows may be orphaned. Expected: four PASS rows.
+select 'repayments.loan_id is nullable' as check,
+       case when is_nullable = 'YES' then 'PASS' else 'FAIL - reversed rows still block the delete' end as result
+from information_schema.columns
+where table_schema = 'public' and table_name = 'repayments' and column_name = 'loan_id'
+union all
+select 'repayments FK releases the loan',
+       case when pg_get_constraintdef(oid) like '%ON DELETE SET NULL%' then 'PASS'
+            else 'FAIL - void_disbursement will fail' end
+from pg_constraint where conname = 'repayments_loan_id_fkey'
+union all
+select 'orphaned repayments must be reversed',
+       case when pg_get_constraintdef(oid) like '%reversed_at IS NOT NULL%' then 'PASS'
+            else 'FAIL - a live repayment could be orphaned' end
+from pg_constraint where conname = 'repayments_voided_loan_chk'
+union all
+select 'collection reminders follow the loan',
+       case when pg_get_constraintdef(oid) like '%ON DELETE CASCADE%' then 'PASS'
+            else 'FAIL - a reminder blocks void_disbursement' end
+from pg_constraint where conname = 'collection_reminders_loan_id_fkey';
+
+
+-- -------------------------------------------------------------------------------------
+-- 21. Security cleanup (021) — internal guard helpers and the public tracking limit.
+-- -------------------------------------------------------------------------------------
+
+-- 21a. trusted_write() lifts the column guard for the current transaction. No client role may
+--      execute it. Expected: two PASS rows.
+select 'trusted_write is internal' as check,
+       case when not has_function_privilege('anon', 'public.trusted_write()', 'execute')
+                 and not has_function_privilege('authenticated', 'public.trusted_write()', 'execute')
+            then 'PASS' else 'FAIL - a client can lift the column guard' end as result
+union all
+select 'in_trusted_write is internal',
+       case when not has_function_privilege('anon', 'public.in_trusted_write()', 'execute')
+                 and not has_function_privilege('authenticated', 'public.in_trusted_write()', 'execute')
+            then 'PASS' else 'FAIL - internal guard detail is exposed' end;
+
+-- 21b. The auth email sync must mark its own write, or a self-service address change fails on the
+--      guard. Expected PASS.
+select case when p.prosrc like '%perform public.trusted_write()%' then 'PASS'
+            else 'FAIL - auth email sync is blocked by guard_protected_columns' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'handle_user_email_change';
+
+-- 21c. The public tracking limit must be counted per application number, not globally. Expected PASS.
+select case when p.prosrc like '%entity_id = v_key%' then 'PASS'
+            else 'FAIL - one caller can exhaust the global tracking budget' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'track_application';
+
+
+-- -------------------------------------------------------------------------------------
+-- 22. Anon EXECUTE (022). Supabase's default privileges outlive `revoke ... from public`, so
+--     this checks every function by name rather than trusting the migration text.
+-- -------------------------------------------------------------------------------------
+
+-- 22a. Only the three public pages and the RLS helper may call a function while signed out.
+--      Expected PASS.
+select case when count(*) = 0
+            then 'PASS - anon can execute only the three public RPCs and is_admin()'
+            else 'FAIL - anon can execute ' || count(*) || ' function(s) that are not public RPCs'
+       end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname not in (
+    'track_application', 'get_application_verification', 'login_email_for_phone', 'is_admin'
+  )
+  and has_function_privilege('anon', p.oid, 'execute');
+
+-- 22b. The public pages must still work. Expected: three PASS rows.
+select p.proname,
+       case when has_function_privilege('anon', p.oid, 'execute') then 'PASS'
+            else 'FAIL - a public page can no longer call this function' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('track_application', 'get_application_verification', 'login_email_for_phone')
+order by p.proname;
+
+-- 22c. The signed-in client must not be able to call the internal guard or trigger helpers.
+--      Expected: six PASS rows.
+select p.proname || ' is internal' as check,
+       case when not has_function_privilege('authenticated', p.oid, 'execute')
+                 and not has_function_privilege('anon', p.oid, 'execute')
+            then 'PASS' else 'FAIL - a client can call this internal function' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in (
+    'trusted_write', 'in_trusted_write', 'guard_protected_columns',
+    'handle_new_user', 'handle_user_email_change', 'touch_updated_at'
+  )
+order by p.proname;
+
+
+-- -------------------------------------------------------------------------------------
+-- 24. The RLS helper (024). Fifteen policies call is_admin(), and policies run as the querying
+--     role, so both client roles need EXECUTE. It returns false for anon, so this is not a leak.
+--     Expected: two PASS rows.
+-- -------------------------------------------------------------------------------------
+select 'anon can evaluate is_admin()' as check,
+       case when has_function_privilege('anon', 'public.is_admin()', 'execute') then 'PASS'
+            else 'FAIL - signed-out reads fail with permission denied' end as result
+union all
+select 'authenticated can evaluate is_admin()',
+       case when has_function_privilege('authenticated', 'public.is_admin()', 'execute') then 'PASS'
+            else 'FAIL - every policy that calls is_admin() errors' end;
