@@ -16,8 +16,10 @@ concurrency:
 
 jobs:
   build:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,9 +43,8 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          # GitHub Pages serves the site from a sub-path. This must match BASE in public/404.html,
-          # or deep links will bounce to the 404 page on every full page load.
-          VITE_BASE_PATH: /ogeseous-microfinance/
+          # Custom-domain deployment uses the domain root. Keep this in sync with BASE in public/404.html.
+          VITE_BASE_PATH: /
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

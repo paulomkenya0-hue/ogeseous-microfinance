@@ -40,12 +40,12 @@
       on every build, and a copy would 404 the moment the next deployment landed.
 
       BASE below must match VITE_BASE_PATH in .github/workflows/deploy.yml. It is the one place
-      that must be updated if the site moves off the /ogeseous-microfinance/ path.
+      that must be updated if the site moves off the / path.
     -->
     <script>
       (function () {
         try {
-          var BASE = '/ogeseous-microfinance/';
+          var BASE = '/';
           sessionStorage.setItem(
             'ogeseous:redirect',
             window.location.pathname + window.location.search + window.location.hash,
@@ -55,7 +55,7 @@
         } catch (e) {
           // Private-mode browsers can refuse sessionStorage. A plain load of the app is still
           // far better than leaving the visitor on this page.
-          window.location.replace('/ogeseous-microfinance/');
+          window.location.replace('/');
         }
       })();
     </script>
