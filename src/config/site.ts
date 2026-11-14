@@ -13,7 +13,7 @@
 export const site = {
   name: 'OGESEOUS MICROFINANCE',
   tagline: 'Empowering Students, Building Futures',
-  logoUrl: '' as string, // e.g. '/logo.png' — put the official file in public/ and point here
+  logoUrl: '/logo.jpg' as string, // e.g. '/logo.png' — put the official file in public/ and point here
   copyright: '© Paulo Mkenya',
   developer: 'Developed by Paulo Mkenya',
 
