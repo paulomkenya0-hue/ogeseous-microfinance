@@ -57,6 +57,7 @@ Run these in the Supabase SQL editor, **in order**:
 | 022 | `022_revoke_anon_function_execute.sql` | **Removes Supabase's default `anon` EXECUTE grant from every public function, then re-grants only the three public RPCs** |
 | 023 | `023_revoke_public_trigger_helpers.sql` | **Also removes the implicit PUBLIC grant that 022 missed on four trigger helpers; 024 restores the one RLS helper both client roles need** |
 | 024 | `024_restore_is_admin_execute.sql` | **Grants `is_admin()` back to `anon` and `authenticated`, because fifteen RLS policies call it as the querying role** |
+| 025 | `025_draft_before_loan_amount.sql` | **Allows a DRAFT to exist before an amount is entered: makes `amount`, `purpose` and `repayment_period_months` nullable, and adds a CHECK requiring a positive amount on anything that has left DRAFT** |
 
 **011 must run before 012, 013 and 014** — the later migrations depend on objects it creates.
 
@@ -64,6 +65,25 @@ After applying all of them, run `supabase/verify_migrations.sql`. It checks that
 object exists, that `sum(repayments)` reconciles with disbursed minus outstanding, that
 `track_application` is callable by `anon` and nothing else is, and it lists any loans that still
 need a schedule (see the note below). Run it before any real money moves.
+
+### 025 — why Continue at step 1 used to fail
+
+Step 1 of the wizard creates the draft application as soon as the student's university and identity
+are confirmed. `004_loan_applications.sql` had declared `amount`, `purpose` and
+`repayment_period_months` as `NOT NULL`, because when it was written the only entry point was the
+loan-details form. Migrations 014 and 017 added the step-1 insert, which has no amount to supply, so
+Postgres refused it with `null value in column "amount" of relation "loan_applications" violates
+not-null constraint`.
+
+025 makes those three columns nullable for drafts. It does **not** insert zero as a workaround:
+zero is not a loan, and every report that sums applications would be wrong. Instead:
+
+* the existing `CHECK (amount > 0)` still refuses zero or a negative amount;
+* a new CHECK requires every application that has left `DRAFT` to carry a positive amount, added
+  `NOT VALID` so it cannot fail on historical rows and then validated when the data is clean;
+* `save_application_loan()` still refuses a NULL or non-positive amount, `submit_loan_application()`
+  still refuses a draft without one, and the wizard validates before it calls either;
+* no table, row, RLS policy or grant is changed by the migration.
 
 ### Students register with a phone number and a PIN — the Supabase settings that must be right
 

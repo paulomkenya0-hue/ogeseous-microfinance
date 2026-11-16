@@ -133,7 +133,7 @@ function validate(field: Field, raw: string): string | null {
   if (v === '') return 'Required.'
   if (field.kind === 'months') {
     const parts = v.split(',').map((p) => p.trim())
-    if (parts.length === 0) return 'Enter at least one period, e.g. 6,12,18,24.'
+    if (parts.length === 0) return 'Enter repayment periods, e.g. 1,2,3.'
     if (parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) < 1 || Number(p) > 120)) {
       return 'Each period must be a whole number between 1 and 120.'
     }

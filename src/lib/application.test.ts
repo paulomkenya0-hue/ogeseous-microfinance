@@ -26,7 +26,7 @@ const FULL: DraftFacts = {
   amount: 1_000_000,
   purpose: 'TUITION_FEES',
   purpose_other: null,
-  repayment_period_months: 12,
+  repayment_period_months: 3,
   monthly_income: 250_000,
   income_source: 'SELF_EMPLOYED',
   monthly_expenses: 120_000,
@@ -228,6 +228,41 @@ describe('per-step completeness', () => {
     const incomplete = { ...FULL, guarantor_national_id: null }
     expect(guarantorStepDone(incomplete, true)).toBe(false)
     expect(guarantorStepDone(incomplete, false)).toBe(true)
+  })
+})
+
+describe('a draft may exist before the loan amount is known', () => {
+  // Step 1 creates the application row on purpose, so the row a brand-new application starts from
+  // has amount = NULL. Migration 004 declared amount NOT NULL and 014/017 inserted without it,
+  // which made Continue fail with "null value in column amount". These tests pin the client-side
+  // half of the fix: a draft in that state is a draft, not a finished loan step.
+  const justConfirmed: DraftFacts = {
+    ...FULL,
+    amount: null,
+    purpose: null,
+    purpose_other: null,
+    repayment_period_months: null,
+  }
+
+  it('does not treat a freshly confirmed application as having loan details', () => {
+    expect(loanStepDone(justConfirmed)).toBe(false)
+    expect(resumeStep(justConfirmed, [], OPTS)).toBe('loan')
+  })
+
+  it('does not treat zero or a negative amount as a complete loan', () => {
+    // save_application_loan() and the table CHECK both refuse these; the resume decision must agree
+    // or a returning student is walked past step 3 and refused only at submit.
+    expect(loanStepDone({ ...FULL, amount: 0 })).toBe(false)
+    expect(loanStepDone({ ...FULL, amount: -1 })).toBe(false)
+    expect(loanStepDone({ ...FULL, amount: 1 })).toBe(true)
+  })
+
+  it('keeps the university branch intact for RUCU, MUCE (MKWAWA) and IU', () => {
+    expect(needsRegisterLookup('RUCU')).toBe(true)
+    expect(needsRegisterLookup('MKWAWA')).toBe(false)
+    expect(needsRegisterLookup('IU')).toBe(false)
+    // The IDs the wizard sends must be the values the database accepts.
+    expect([...DECLARABLE_UNIVERSITIES]).toEqual(['MKWAWA', 'IU'])
   })
 })
 

@@ -228,10 +228,21 @@ export const digits = (v: string | null | undefined): string => (v ?? '').replac
 const present = (v: string | null | undefined, min: number): boolean => (v ?? '').trim().length >= min
 const has = (v: number | null | undefined): boolean => typeof v === 'number' && Number.isFinite(v)
 
-/** The loan step is complete when the server would accept save_application_loan(). */
+/**
+ * The loan step is complete when the server would accept save_application_loan().
+ *
+ * The amount must be strictly positive, not merely a number. A draft created at step 1 has
+ * amount = NULL until step 3, and "0" is not a valid loan either: save_application_loan() refuses
+ * both, and migration 025 keeps the table's CHECK (amount > 0). Treating zero as complete here
+ * would send a returning student past the step that is supposed to ask for the amount and only
+ * fail at submit.
+ */
 export function loanStepDone(d: DraftFacts): boolean {
-  return has(d.amount) && present(d.purpose, 2) && has(d.repayment_period_months) && (
-    d.purpose !== 'OTHER' || present(d.purpose_other, 3)
+  return (
+    has(d.amount) && (d.amount ?? 0) > 0 &&
+    present(d.purpose, 2) &&
+    has(d.repayment_period_months) && (d.repayment_period_months ?? 0) > 0 &&
+    (d.purpose !== 'OTHER' || present(d.purpose_other, 3))
   )
 }
 

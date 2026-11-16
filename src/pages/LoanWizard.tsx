@@ -1027,7 +1027,7 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
             <Field label="Repayment period" error={err.months}>
               <select className="input mt-1" value={months} onChange={(e) => { setMonths(e.target.value); setDirty(true) }}>
                 <option value="">Select a repayment period</option>
-                {(policy?.periods?.length ? policy.periods : [6, 12, 18, 24]).map((m) => (
+                {(policy?.periods?.length ? policy.periods : [1, 2, 3]).map((m) => (
                   <option key={m} value={m}>
                     {m} months
                   </option>
@@ -1325,7 +1325,13 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
               <Row label="Emergency contact">
                 {emName ? `${emName} (${emRel}) ${emPhone}` : <span className="text-slate-400">Not given</span>}
               </Row>
-              <Row label="Amount requested">{tzs(amountNum ?? 0)}</Row>
+              <Row label="Amount requested">
+                {amountNum === null || amountNum <= 0 ? (
+                  <span className="text-red-600">Not entered — return to Loan Details</span>
+                ) : (
+                  tzs(amountNum)
+                )}
+              </Row>
               <Row label="Purpose">{purposeText(purpose, purposeOther)}</Row>
               <Row label="Repayment period">{months ? `${months} months` : '—'}</Row>
               <Row label="Monthly income">{tzs(num(income) ?? 0)}</Row>

@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 024 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 025 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -892,3 +892,65 @@ union all
 select 'authenticated can evaluate is_admin()',
        case when has_function_privilege('authenticated', 'public.is_admin()', 'execute') then 'PASS'
             else 'FAIL - every policy that calls is_admin() errors' end;
+
+
+-- -------------------------------------------------------------------------------------
+-- 25. Drafts before the loan amount (025). Step 1 creates the application row before step 3 has
+--     asked for an amount. 004 declared amount NOT NULL, so that insert raised and no student could
+--     get past Continue. 025 makes the three loan-detail columns nullable and re-imposes the
+--     positive-amount rule on every application that has left DRAFT.
+-- -------------------------------------------------------------------------------------
+
+-- 25a. The three columns must be nullable for a draft to exist before step 3. Expected: three rows,
+--      all PASS.
+select column_name,
+       case when is_nullable = 'YES' then 'PASS'
+            else 'FAIL - a step 1 draft cannot be inserted' end as result
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'loan_applications'
+  and column_name in ('amount', 'purpose', 'repayment_period_months')
+order by ordinal_position;
+
+-- 25b. The guarantee that replaces NOT NULL for real applications must exist. Expected: one row,
+--      PASS. convalidated may be false (NOT VALID) on a database with legacy bad rows; the
+--      constraint is still enforced for every new insert and update.
+select conname,
+       convalidated as validated,
+       case when pg_get_constraintdef(oid) like '%amount IS NOT NULL%'
+                  and pg_get_constraintdef(oid) like '%amount > 0%'
+             then 'PASS' else 'FAIL - a submitted application can still lack an amount' end as result
+from pg_constraint
+where conrelid = 'public.loan_applications'::regclass
+  and conname = 'loan_applications_submitted_amount_check';
+
+-- 25c. Zero must still never be a stored amount. Expected: at least one row, PASS.
+select conname,
+       case when pg_get_constraintdef(oid) like '%amount > 0%' then 'PASS'
+            else 'FAIL - a zero amount could be stored' end as result
+from pg_constraint
+where conrelid = 'public.loan_applications'::regclass
+  and contype = 'c'
+  and pg_get_constraintdef(oid) like '%amount > 0%'
+limit 1;
+
+-- 25d. No application that has left DRAFT may be missing its amount. Expected: zero rows. Any row
+--      here needs a human decision; it is deliberately not repaired by the migration.
+select id, user_id, status, amount, created_at
+from public.loan_applications
+where status <> 'DRAFT' and (amount is null or amount <= 0)
+order by created_at desc
+limit 50;
+
+-- 25e. The insert paths that create the step-1 draft must not be writing a placeholder amount.
+--      Expected: neither function body contains "amount" in its INSERT column list, because the
+--      draft is created without one.
+select p.proname,
+       case when p.prosrc not like '%(user_id, student_record_id%amount%'
+                  and p.prosrc not like '%(user_id, amount%'
+             then 'PASS' else 'FAIL - a placeholder amount is being written' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in ('verify_student_from_register', 'declare_application_student')
+order by p.proname;
