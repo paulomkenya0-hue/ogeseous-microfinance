@@ -8,17 +8,28 @@
  * if the two ever disagree, the database wins and the page shows the error the database gave.
  */
 
-/** Mirrors the status CHECK constraint installed by migration 014. */
+/** Mirrors the status CHECK constraint installed by migration 027. */
 export const APPLICATION_STATUSES = [
   'DRAFT',
+  'PENDING_LOAN_OFFICER',
+  'RETURNED_TO_LOAN_OFFICER',
+  'ACTION_REQUIRED',
+  'PENDING_MANAGER',
+  'PENDING_ACCOUNTANT',
+  'RETURNED_TO_ACCOUNTANT',
+  'PENDING_TERMS_APPROVAL',
+  'TERMS_APPROVED',
+  'TERMS_ACCEPTED',
+  'DISBURSED',
+  'PAID_OFF',
+  'CLOSED',
+  'REJECTED',
+  // Historical statuses. 027 backfills them, but they are kept in the vocabulary so an
+  // un-migrated row renders its real state rather than a raw code.
   'SUBMITTED',
   'UNDER_REVIEW',
-  'ACTION_REQUIRED',
   'APPROVED',
-  'REJECTED',
-  'DISBURSED',
   'COMPLETED',
-  'CLOSED',
 ] as const
 
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
@@ -65,12 +76,21 @@ export const STATUS_LABEL: Record<string, string> = {
   DRAFT: 'Draft — not submitted',
   SUBMITTED: 'Submitted',
   UNDER_REVIEW: 'Under review',
+  PENDING_LOAN_OFFICER: 'With the loan officer',
+  RETURNED_TO_LOAN_OFFICER: 'Returned to the loan officer',
   ACTION_REQUIRED: 'Action required',
+  PENDING_MANAGER: 'With the manager',
+  PENDING_ACCOUNTANT: 'With the accountant — preparing terms',
+  RETURNED_TO_ACCOUNTANT: 'Terms returned to the accountant',
+  PENDING_TERMS_APPROVAL: 'Terms awaiting manager approval',
+  TERMS_APPROVED: 'Terms awaiting your acceptance',
+  TERMS_ACCEPTED: 'Terms accepted — ready to disburse',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
   DISBURSED: 'Disbursed',
+  PAID_OFF: 'Paid off — awaiting final reconciliation',
   COMPLETED: 'Completed',
-  CLOSED: 'Closed',
+  CLOSED: 'Closed and reconciled',
 }
 
 /** One line a student can read on their dashboard without having to ask the office. */
@@ -79,12 +99,21 @@ export const STATUS_EXPLAIN: Record<string, string> = {
   DRAFT: 'Saved but NOT submitted. OGESEOUS cannot see it and it is not being reviewed.',
   SUBMITTED: 'Received. It is in the queue for a loan officer.',
   UNDER_REVIEW: 'A loan officer is assessing your application. Nothing is needed from you right now.',
+  PENDING_LOAN_OFFICER: 'A loan officer is assessing your application. Nothing is needed from you right now.',
+  RETURNED_TO_LOAN_OFFICER: 'The manager sent this back to the loan officer for a fresh assessment.',
   ACTION_REQUIRED: 'OGESEOUS needs something from you before this can move on. See the note below.',
+  PENDING_MANAGER: 'The loan officer has forwarded it. A manager is considering it now.',
+  PENDING_ACCOUNTANT: 'The manager approved it. The accountant is preparing your loan terms.',
+  RETURNED_TO_ACCOUNTANT: 'The manager asked the accountant to correct the loan terms.',
+  PENDING_TERMS_APPROVAL: 'The accountant has prepared your terms and the manager is reviewing them.',
+  TERMS_APPROVED: 'Your loan terms are ready. Open your application to read them and accept or decline them.',
+  TERMS_ACCEPTED: 'You accepted the terms. The accountant will disburse the money.',
   APPROVED: 'Approved and waiting for disbursement. OGESEOUS will contact you.',
   REJECTED: 'Not approved. The reason is shown below.',
   DISBURSED: 'The money has been sent. See your loan for the repayment schedule.',
+  PAID_OFF: 'Every installment is paid. The accountant is doing the final reconciliation.',
   COMPLETED: 'Fully repaid and closed.',
-  CLOSED: 'Closed.',
+  CLOSED: 'Fully repaid, reconciled and closed. The file is complete.',
 }
 
 /** Mirrors the purpose CHECK constraint from migration 014. */
@@ -131,10 +160,61 @@ export const missingDocuments = (required: readonly string[], attached: readonly
 
 /**
  * Statuses in which an application still belongs to the student rather than to staff: a draft being
- * filled in, or one a loan officer is acting on. Mirrors the partial unique index
- * one_open_application_per_student, which is what guarantees a student cannot hold two at once.
+ * filled in, or one that needs something from them. Mirrors the partial unique index
+ * one_open_application_per_student from migration 027, which is what guarantees a student cannot
+ * hold two in-progress applications at once. DISBURSED, PAID_OFF, CLOSED and REJECTED are outside it.
  */
-export const OPEN_STATUSES = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED'] as const
+export const OPEN_STATUSES = [
+  'DRAFT',
+  'PENDING_LOAN_OFFICER',
+  'RETURNED_TO_LOAN_OFFICER',
+  'ACTION_REQUIRED',
+  'PENDING_MANAGER',
+  'PENDING_ACCOUNTANT',
+  'RETURNED_TO_ACCOUNTANT',
+  'PENDING_TERMS_APPROVAL',
+  'TERMS_APPROVED',
+  'TERMS_ACCEPTED',
+] as const
+
+/** The statuses each role can act on. Kept here so a page offers only what the database allows. */
+export const LOAN_OFFICER_ACTION_STATUSES = ['PENDING_LOAN_OFFICER', 'RETURNED_TO_LOAN_OFFICER'] as const
+export const MANAGER_ACTION_STATUSES = ['PENDING_MANAGER'] as const
+export const ACCOUNTANT_TERMS_STATUSES = ['PENDING_ACCOUNTANT', 'RETURNED_TO_ACCOUNTANT'] as const
+export const MANAGER_TERMS_STATUSES = ['PENDING_TERMS_APPROVAL'] as const
+export const STUDENT_TERMS_STATUSES = ['TERMS_APPROVED'] as const
+export const ACCOUNTANT_DISBURSE_STATUSES = ['TERMS_ACCEPTED'] as const
+
+/** Mirrors the loan_terms status CHECK from migration 027. */
+export const TERMS_STATUS_LABEL: Record<string, string> = {
+  DRAFT_TERMS: 'Draft terms',
+  PENDING_MANAGER_TERMS: 'Awaiting manager approval',
+  APPROVED_TERMS: 'Approved — awaiting student acceptance',
+  ACCEPTED_BY_STUDENT: 'Accepted by the student',
+  DISBURSED: 'Disbursed',
+  VOIDED: 'Voided',
+}
+
+/** Mirrors the repayments status CHECK from migration 027. */
+export const REPAYMENT_STATUS_LABEL: Record<string, string> = {
+  PENDING_VERIFICATION: 'Awaiting verification',
+  VERIFIED: 'Verified',
+  REJECTED: 'Rejected',
+  REVERSED: 'Reversed',
+}
+
+/** "1 month", not "1 months". Used anywhere a term is shown. */
+export const monthsLabel = (months: number | null | undefined): string =>
+  months === null || months === undefined ? '—' : `${months} month${months === 1 ? '' : 's'}`
+
+/**
+ * True when a status is one of a role's allowed statuses. The status lists above are typed as
+ * literal tuples, so this keeps a page from having to cast a plain string to `never` merely to ask
+ * the question. It is still only a rendering convenience — the RPC decides for real.
+ */
+export const isOneOf = (list: readonly string[], value: string | null | undefined): boolean =>
+  value !== null && value !== undefined && list.includes(value)
+
 
 // ---------------------------------------------------------------------------------------
 // The wizard's shape.
@@ -294,17 +374,21 @@ export function resumeStep(
 }
 
 /**
- * Whether a submitted application can still be edited here. Anything that is not a DRAFT belongs
- * to staff: a student who could still write to an UNDER_REVIEW application could change the numbers
- * an officer was halfway through assessing.
+ * Whether a submitted application can still be edited here. A DRAFT is the student's own work; an
+ * ACTION_REQUIRED application is one staff have sent back for a correction. Anything else belongs
+ * to staff: a student who could still write to a PENDING_MANAGER application could change the
+ * numbers an officer was halfway through assessing. The database enforces the same rule.
  */
-export const isEditable = (status: string | null | undefined): boolean => status === 'DRAFT'
+export const isEditable = (status: string | null | undefined): boolean =>
+  status === 'DRAFT' || status === 'ACTION_REQUIRED'
 
 /**
- * The statuses an officer may still act on. Mirrors the guard inside review_loan_application().
- * Kept in the client purely so the buttons are not offered; the database refuses regardless.
+ * The statuses a loan officer may act on, mirroring forward_application_to_manager() and
+ * loan_officer_reject_application(). Kept in the client purely so buttons are not offered; the
+ * database refuses regardless.
  */
-export const REVIEWABLE: readonly string[] = ['SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED']
+export const REVIEWABLE: readonly string[] = [...LOAN_OFFICER_ACTION_STATUSES]
+
 
 /** A mask for a public page: initials only, never a full name. */
 export function maskInitials(fullName: string | null | undefined): string {

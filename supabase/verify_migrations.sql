@@ -1,6 +1,6 @@
 -- =====================================================================================
 -- OGESEOUS MICROFINANCE — Post-migration verification
--- Run this AFTER migrations 001 -> 025 in the Supabase SQL editor.
+-- Run this AFTER migrations 001 -> 030 in the Supabase SQL editor.
 -- Read-only: it selects and reports, it does not change anything.
 --
 -- How to read the output: every row saying "FAIL" must be fixed before any real
@@ -11,7 +11,7 @@
 
 
 -- -------------------------------------------------------------------------------------
--- 1. Do all 24 migrations' objects exist?
+-- 1. Do all 30 migrations' objects exist?
 -- -------------------------------------------------------------------------------------
 with expected(grp, name) as (values
   ('table','users'), ('table','student_profiles'), ('table','audit_logs'),
@@ -46,8 +46,24 @@ with expected(grp, name) as (values
   ('function','resubmit_application'), ('function','get_application_history'),
   ('function','track_application'), ('function','required_document_types'),
   ('function','guarantor_is_required'), ('function','application_student_detail'),
+  ('table','loan_terms'), ('table','disbursements'), ('table','loan_workflow_transitions'),
+  ('table','financial_audit_events'), ('table','loan_closures'),
+  ('function','forward_application_to_manager'), ('function','loan_officer_reject_application'),
+  ('function','manager_decide_application'), ('function','return_application_to_student'),
+  ('function','accountant_prepare_terms'), ('function','manager_approve_terms'),
+  ('function','manager_return_terms'), ('function','student_accept_terms'),
+  ('function','student_decline_terms'), ('function','record_workflow_transition'),
+  ('function','log_financial_event'), ('function','amortization_schedule'), ('function','loan_quote'),
+  ('function','disburse_tranche'), ('function','submit_repayment'), ('function','verify_repayment'),
+  ('function','reject_repayment'), ('function','loan_settlement_quote'),
+  ('function','submit_loan_settlement'), ('function','close_loan'),
+  ('function','super_admin_amend_repayment'), ('function','list_pending_repayments'),
+  ('function','get_application_terms'), ('function','get_application_workflow'),
+  ('function','rebuild_loan_payments_internal'), ('function','prevent_evidence_mutation'),
   ('index','one_identity_per_account'), ('index','repayments_reference_uniq'),
-  ('index','one_open_application_per_student'), ('index','applications_by_status')
+  ('index','one_open_application_per_student'), ('index','applications_by_status'),
+  ('index','repayments_verification_queue_idx'), ('index','installments_loan_tranche_seq_uniq'),
+  ('index','loan_terms_one_open_per_application')
 )
 select e.grp, e.name,
        case
@@ -107,16 +123,18 @@ where id = 'verification-documents';
 -- -------------------------------------------------------------------------------------
 -- 5. THE IMPORTANT ONE — does the money arithmetic reconcile?
 --
---    Migration 013 replaced the single-due-date model with a real schedule, so the test changed.
---    For every loan, all three of these must be true:
+--    Migration 013 replaced the single-due-date model with a real schedule, and 027-029 added
+--    two-person repayment verification. For every loan, all three of these must be true:
 --      (a) sum(installments.amount_due)   == principal + interest billed for that loan
---      (b) sum(installments.amount_paid)   == sum of that loan's non-reversed repayments
+--      (b) sum(installments.amount_paid)   == sum of that loan's VERIFIED, non-reversed repayments
 --      (c) loans.outstanding_balance       == sum(amount_due - amount_paid) over that loan
+--    PENDING_VERIFICATION, REJECTED and REVERSED repayments are deliberately NOT counted: the
+--    schedule is rebuilt only when an officer other than the submitter verifies the money.
 --    If (b) or (c) fails, /admin/reports and every collections figure are showing wrong numbers.
 --
 --    Any FAIL can be repaired without touching data by hand:
---       select public.recalculate_loan('<loan_id>');
---    That recomputes the schedule from the repayments table, which is the record of what
+--       select public.rebuild_loan_payments('<loan_id>');
+--    That recomputes the schedule from the verified repayments table, which is the record of what
 --    actually happened. Run it for each failing loan, then re-run this check.
 -- -------------------------------------------------------------------------------------
 with per_loan as (
@@ -124,24 +142,24 @@ with per_loan as (
     coalesce((select sum(i.amount_due)   from public.loan_installments i where i.loan_id = l.id), 0) as scheduled,
     coalesce((select sum(i.amount_paid)   from public.loan_installments i where i.loan_id = l.id), 0) as allocated,
     coalesce((select sum(r.amount) from public.repayments r
-              where r.loan_id = l.id and r.reversed_at is null), 0) as received
+              where r.loan_id = l.id and r.status = 'VERIFIED' and r.reversed_at is null), 0) as received
   from public.loans l
 )
 select
   count(*) filter (where allocated <> received)                                        as paid_mismatch,
   count(*) filter (where outstanding_balance <> scheduled - allocated)                 as balance_mismatch,
-  count(*) filter (where status = 'CLOSED' and allocated <> scheduled)                 as closed_but_unpaid,
-  count(*) filter (where status = 'ACTIVE' and allocated = scheduled)                 as paid_but_still_active,
+  count(*) filter (where status in ('CLOSED','PAID_OFF') and allocated <> scheduled)   as closed_but_unpaid,
+  count(*) filter (where status = 'ACTIVE' and allocated = scheduled)                  as paid_but_still_active,
   count(*) filter (where scheduled = 0)                                                as loans_with_no_schedule,
   count(*)                                                        as total_loans,
   case
     when count(*) filter (where allocated <> received) = 0
      and count(*) filter (where outstanding_balance <> scheduled - allocated) = 0
-     and count(*) filter (where status = 'CLOSED' and allocated <> scheduled) = 0
+     and count(*) filter (where status in ('CLOSED','PAID_OFF') and allocated <> scheduled) = 0
      and count(*) filter (where status = 'ACTIVE' and allocated = scheduled) = 0
      and count(*) filter (where scheduled = 0) = 0
     then 'PASS - money reconciles'
-    else 'FAIL - run recalculate_loan() for each row listed by the queries below'
+    else 'FAIL - run rebuild_loan_payments() for each row listed by the queries below'
   end as result
 from per_loan;
 
@@ -151,13 +169,13 @@ with per_loan as (
     coalesce((select sum(i.amount_due)   from public.loan_installments i where i.loan_id = l.id), 0) as scheduled,
     coalesce((select sum(i.amount_paid)   from public.loan_installments i where i.loan_id = l.id), 0) as allocated,
     coalesce((select sum(r.amount) from public.repayments r
-              where r.loan_id = l.id and r.reversed_at is null), 0) as received
+              where r.loan_id = l.id and r.status = 'VERIFIED' and r.reversed_at is null), 0) as received
   from public.loans l
 )
 select id, principal_amount, scheduled, received, allocated, outstanding_balance, status,
        case
          when scheduled = 0 then 'no schedule generated'
-         when allocated <> received then 'installments <> repayments'
+         when allocated <> received then 'installments <> verified repayments'
          when outstanding_balance <> scheduled - allocated then 'balance <> schedule'
          else 'ok'
        end as problem
@@ -165,27 +183,32 @@ from per_loan
 where scheduled = 0
    or allocated <> received
    or outstanding_balance <> scheduled - allocated
-   or (status = 'CLOSED' and allocated <> scheduled)
+   or (status in ('CLOSED','PAID_OFF') and allocated <> scheduled)
    or (status = 'ACTIVE' and allocated = scheduled)
 limit 50;
 
 
 -- -------------------------------------------------------------------------------------
 -- 5b. Portfolio-level check, independent of the per-loan detail above.
+--
+--     Only VERIFIED, non-reversed repayments are money the borrower has actually paid.
 -- -------------------------------------------------------------------------------------
 select
   coalesce((select sum(principal_amount) from public.loans), 0)                 as total_disbursed,
-  coalesce((select sum(amount) from public.repayments where reversed_at is null), 0) as total_collected,
+  coalesce((select sum(amount) from public.repayments
+             where status = 'VERIFIED' and reversed_at is null), 0)             as total_collected,
   coalesce((select sum(outstanding_balance) from public.loans), 0)              as total_outstanding,
   coalesce((select sum(principal_amount) from public.loans), 0)
-    - coalesce((select sum(amount) from public.repayments where reversed_at is null), 0)
+    - coalesce((select sum(amount) from public.repayments
+                 where status = 'VERIFIED' and reversed_at is null), 0)
     - coalesce((select sum(outstanding_balance) from public.loans), 0)          as difference,
   case
     when coalesce((select sum(principal_amount) from public.loans), 0)
-       - coalesce((select sum(amount) from public.repayments where reversed_at is null), 0)
+       - coalesce((select sum(amount) from public.repayments
+                    where status = 'VERIFIED' and reversed_at is null), 0)
        - coalesce((select sum(outstanding_balance) from public.loans), 0) = 0
-    then 'PASS - disbursed <> repayments + outstanding'
-    else 'FAIL - disbursed <> repayments + outstanding'
+    then 'PASS - disbursed = verified repayments + outstanding'
+    else 'FAIL - disbursed <> verified repayments + outstanding'
   end as result;
 
 -- Reversed repayments must be excluded from every total. This shows what they were, for review.
@@ -954,3 +977,200 @@ join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname in ('verify_student_from_register', 'declare_application_student')
 order by p.proname;
+
+
+-- -------------------------------------------------------------------------------------
+-- 26-30. The sequential loan workflow, financial engine and hardening.
+--
+--    These migrations add the loan officer -> manager -> accountant -> student terms acceptance
+--    -> accountant disbursement -> collections -> accountant closure path, plus the two-person
+--    repayment rule, reducing-balance schedules and immutable audit evidence.
+-- -------------------------------------------------------------------------------------
+
+-- 26a. The repayment period policy is exactly 1, 2 or 3 months. The constraint may be NOT VALID on a
+--      legacy database (historical 6/12/18/24-month rows); it is still enforced for new writes.
+--      Expected: one row, PASS on the definition. `validated = false` is acceptable only if there
+--      are legacy rows listed by 26b.
+select conname, convalidated as validated,
+       case when pg_get_constraintdef(oid) like '%1, 2, 3%' then 'PASS - three-month policy'
+            else 'FAIL - wrong repayment period definition' end as result
+from pg_constraint
+where conrelid = 'public.loan_applications'::regclass
+  and conname = 'loan_applications_repayment_period_months_check';
+
+-- 26b. Legacy applications outside the 1-3 month policy. Expected: zero rows after business
+--      confirmation. Each row needs a human decision; the migration does not rewrite history.
+select id, application_number, status, repayment_period_months, created_at
+from public.loan_applications
+where repayment_period_months is not null
+  and repayment_period_months not in (1, 2, 3)
+order by created_at desc
+limit 50;
+
+-- 26c. allowed_repayment_months() must never return an empty list, whatever the setting says.
+--      Expected: PASS with exactly 1,2,3.
+select public.allowed_repayment_months() as allowed_months,
+       case when public.allowed_repayment_months() = array[1,2,3] then 'PASS'
+            else 'FAIL - the wizard can offer no valid period' end as result;
+
+-- 27a. The five workflow tables must have RLS enabled. Expected: five PASS rows.
+select c.relname as table_name, c.relrowsecurity as rls_enabled,
+       case when c.relrowsecurity then 'PASS' else 'FAIL - no RLS' end as result
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public'
+  and c.relname in ('loan_terms','disbursements','loan_workflow_transitions',
+                    'financial_audit_events','loan_closures')
+order by c.relname;
+
+-- 27b. No application may still be in a retired status after the 027 backfill.
+--      Expected: zero rows.
+select id, application_number, status
+from public.loan_applications
+where status in ('SUBMITTED','UNDER_REVIEW','APPROVED','COMPLETED')
+limit 50;
+
+-- 27c. Every open application must be in a workflow status the app understands. Expected: zero rows.
+select id, application_number, status
+from public.loan_applications
+where status not in (
+  'DRAFT','PENDING_LOAN_OFFICER','RETURNED_TO_LOAN_OFFICER','ACTION_REQUIRED','PENDING_MANAGER',
+  'PENDING_ACCOUNTANT','RETURNED_TO_ACCOUNTANT','PENDING_TERMS_APPROVAL','TERMS_APPROVED',
+  'TERMS_ACCEPTED','DISBURSED','PAID_OFF','CLOSED','REJECTED'
+)
+limit 50;
+
+-- 28a. The workflow RPCs and their grants. A signed-in client must reach every one; anon must not.
+--      Expected: no FAIL rows.
+select p.proname,
+       case when has_function_privilege('authenticated', p.oid, 'execute')
+                 and not has_function_privilege('anon', p.oid, 'execute') then 'PASS'
+            when not has_function_privilege('authenticated', p.oid, 'execute') then 'FAIL - staff cannot call it'
+            else 'FAIL - anon can call it' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname in (
+    'forward_application_to_manager','loan_officer_reject_application','manager_decide_application',
+    'return_application_to_student','accountant_prepare_terms','manager_approve_terms',
+    'manager_return_terms','student_accept_terms','student_decline_terms','disburse_tranche',
+    'submit_repayment','verify_repayment','reject_repayment','reverse_repayment','void_disbursement',
+    'close_loan','loan_settlement_quote','submit_loan_settlement','super_admin_amend_repayment',
+    'get_application_terms','get_application_workflow','get_application_history'
+  )
+order by p.proname;
+
+-- 28b. One schedule source of truth: a loan, tranche and sequence number must be unique.
+--      Expected: PASS.
+select indexname,
+       case when indexdef like '%UNIQUE%' then 'PASS' else 'FAIL - duplicate schedule rows are possible' end as result
+from pg_indexes
+where schemaname = 'public' and indexname = 'installments_loan_tranche_seq_uniq';
+
+-- 28c. Only one open terms offer per application. Expected: PASS.
+select indexname,
+       case when indexdef like '%UNIQUE%' then 'PASS' else 'FAIL - two competing terms offers are possible' end as result
+from pg_indexes
+where schemaname = 'public' and indexname = 'loan_terms_one_open_per_application';
+
+-- 29a. A verified repayment must be verified by a DIFFERENT officer than the submitter. The
+--      constraints are NOT VALID on a legacy database, but new rows are enforced.
+--      Expected: two rows, both PASS on the definition.
+select conname,
+       case when pg_get_constraintdef(oid) like '%verified_by%submitted_by%'
+                  or pg_get_constraintdef(oid) like '%submitted_by%verified_by%' then 'PASS'
+            else 'check by hand' end as result
+from pg_constraint
+where conrelid = 'public.repayments'::regclass
+  and conname in ('repayments_two_person_check','repayments_status_reversal_check');
+
+-- 29b. Duplicate references must not be possible among live payments. Expected: PASS.
+select indexname,
+       case when indexdef like '%UNIQUE%' then 'PASS' else 'FAIL - a transaction reference can be reused' end as result
+from pg_indexes
+where schemaname = 'public' and indexname = 'repayments_reference_uniq';
+
+-- 29c. Repayments sitting in PENDING_VERIFICATION, with the submitter and how old they are. This is
+--      the accountant's queue; a growing backlog means money is being banked but not recognised.
+select r.id, r.loan_id, r.amount, r.method, r.reference, r.paid_at, r.submitted_at,
+       coalesce(sp.full_name, u.email) as submitted_by,
+       now() - r.submitted_at as waiting
+from public.repayments r
+left join public.student_profiles sp on sp.user_id = r.submitted_by
+left join public.users u on u.id = r.submitted_by
+where r.status = 'PENDING_VERIFICATION' and r.reversed_at is null
+order by r.submitted_at
+limit 50;
+
+-- 29d. The payment-proofs bucket must be private. Expected: PASS.
+select id, public,
+       case when public then 'FAIL - proof of payment is public' else 'PASS - private' end as result
+from storage.buckets
+where id = 'payment-proofs';
+
+-- 29e. Stored signed references that differ only by case or whitespace indicate a duplicate that
+--      was inserted before the unique index existed. Expected: zero rows.
+select lower(btrim(reference)) as normalised_reference, count(*) as rows
+from public.repayments
+where reference is not null and status not in ('REJECTED','REVERSED')
+group by lower(btrim(reference))
+having count(*) > 1;
+
+-- 29f. Every verified repayment must have a verifier who is not the submitter. Expected: zero rows.
+select r.id, r.loan_id, r.amount, r.submitted_by, r.verified_by
+from public.repayments r
+where r.status = 'VERIFIED'
+  and (r.verified_by is null or r.verified_by = r.submitted_by or r.verified_by = r.recorded_by)
+limit 50;
+
+-- 30a. Accountants and collection officers must be able to read the application file, or their
+--      queues render empty. Expected: PASS.
+select 'application read policy covers ACCOUNTANT and COLLECTION_OFFICER' as check,
+       case when exists (
+         select 1 from pg_policies pol
+          where pol.schemaname = 'public' and pol.tablename = 'loan_applications'
+            and pol.cmd = 'SELECT'
+            and pol.qual like '%ACCOUNTANT%'
+            and pol.qual like '%COLLECTION_OFFICER%'
+       ) then 'PASS' else 'FAIL - a finance queue will render empty' end as result;
+
+-- 30b. Financial settings may only be changed by a super admin. The role check lives in the
+--      function body. Expected: PASS.
+select case when p.prosrc like '%Financial settings can only be changed by a super admin%' then 'PASS'
+            else 'FAIL - a manager can change the interest rate' end as result
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public' and p.proname = 'set_setting';
+
+-- 30c. Audit evidence must be append-only. Expected: no FAIL rows.
+select c.relname as table_name, t.tgname as trigger_name,
+       case when t.tgenabled <> 'D' then 'PASS' else 'FAIL - immutability trigger is disabled' end as result
+from pg_trigger t
+join pg_class c on c.oid = t.tgrelid
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public'
+  and c.relname in ('financial_audit_events','loan_workflow_transitions','disbursements',
+                    'repayments','loan_closures')
+  and not t.tgisinternal
+  and t.tgname in ('trg_financial_audit_immutable','trg_workflow_transitions_immutable',
+                   'trg_disbursements_no_delete','trg_repayments_no_delete','trg_loan_closures_immutable')
+order by c.relname;
+
+-- 30d. Application statuses that need staff action, counted by stage. Expected: the accountant and
+--      manager queues are visible here; all-zero is normal on a fresh database.
+select status, count(*) as applications
+from public.loan_applications
+where status in ('PENDING_LOAN_OFFICER','PENDING_MANAGER','PENDING_ACCOUNTANT',
+                 'PENDING_TERMS_APPROVAL','TERMS_APPROVED','TERMS_ACCEPTED')
+group by status
+order by status;
+
+-- 30e. Loans that are fully settled but not yet reconciled by the accountant. Expected: zero rows
+--      once operations are current; each row is ready for close_loan().
+select l.id, l.application_id, l.status, l.outstanding_balance,
+       (select max(closed_at) from public.loan_closures c where c.loan_id = l.id) as closed_at
+from public.loans l
+where l.status = 'PAID_OFF'
+  and not exists (select 1 from public.loan_closures c where c.loan_id = l.id)
+order by l.id
+limit 50;

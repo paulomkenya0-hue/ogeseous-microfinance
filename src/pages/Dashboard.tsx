@@ -229,6 +229,7 @@ export default function Dashboard() {
   const status = application?.status ?? NOT_APPLIED
   const isDraft = status === 'DRAFT'
   const actionRequired = status === 'ACTION_REQUIRED'
+  const awaitingTerms = status === 'TERMS_APPROVED'
   const rejected = status === 'REJECTED'
 
   return (
@@ -250,6 +251,20 @@ export default function Dashboard() {
 
       {error && <ErrorNote error={error} onRetry={() => void load()} />}
       {actionError && <ErrorNote error={actionError} />}
+
+      {awaitingTerms && (
+        <div className="card border-blue-300 bg-blue-50">
+          <h2 className="font-semibold text-navy">Your loan terms are ready</h2>
+          <p className="mt-1 text-sm text-slate-700">
+            The manager has approved the terms. Open your application to see the interest rate,
+            monthly installment and total repayable — then accept them or ask for changes. The
+            accountant cannot release the money until you decide.
+          </p>
+          <Link to="/loan/application" className="btn-primary mt-3 inline-block">
+            REVIEW AND DECIDE
+          </Link>
+        </div>
+      )}
 
       <Card title="Loan application">
         {status === NOT_APPLIED ? (

@@ -7,7 +7,15 @@ import { describeError, rpc, tzs } from '../lib/api'
 import { Badge, Card, ErrorNote, Money, Row, STATUS_TONE, dateTime } from '../components/ui'
 import { universityName, site } from '../config/site'
 import { openDocument } from '../lib/storage'
-import { APP_DOC_LABELS, STATUS_EXPLAIN, STATUS_LABEL, purposeText, type AppDocType } from '../lib/application'
+import {
+  APP_DOC_LABELS,
+  STATUS_EXPLAIN,
+  STATUS_LABEL,
+  TERMS_STATUS_LABEL,
+  monthsLabel,
+  purposeText,
+  type AppDocType,
+} from '../lib/application'
 
 type App = {
   id: string
@@ -53,6 +61,23 @@ type HistoryRow = {
   actor_role: string | null
   created_at: string
 }
+type Terms = {
+  terms_id: string
+  tranche_no: number
+  status: string
+  principal_amount: number
+  annual_rate: number
+  period_months: number
+  installment_amount: number
+  total_interest: number
+  total_repayable: number
+  prepared_at: string | null
+  approved_at: string | null
+  accepted_at: string | null
+  manager_comment: string | null
+  accountant_comment: string | null
+  return_reason: string | null
+}
 
 /**
  * The student's view of one application: what it says, where it is, what has happened to it, and
@@ -69,9 +94,15 @@ export default function ApplicationView() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [docs, setDocs] = useState<DocRow[]>([])
   const [history, setHistory] = useState<HistoryRow[]>([])
+  const [terms, setTerms] = useState<Terms[]>([])
+  const [termsBusy, setTermsBusy] = useState('')
+  const [acceptChecked, setAcceptChecked] = useState(false)
+  const [declineFor, setDeclineFor] = useState('')
+  const [declineReason, setDeclineReason] = useState('')
   const [qr, setQr] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
   const [pdfError, setPdfError] = useState('')
   const [docBusy, setDocBusy] = useState('')
@@ -103,7 +134,7 @@ export default function ApplicationView() {
       setProfile(p.data as Profile)
 
       if (row) {
-        const [d, h] = await Promise.all([
+        const [d, h, t] = await Promise.all([
           supabase
             .from('loan_documents')
             .select('doc_type,storage_path,uploaded_at')
@@ -120,13 +151,18 @@ export default function ApplicationView() {
           // through to the inline ErrorNote with a retry button rather than to the full-page
           // failure, which is reserved for "no application at all".
           rpc<HistoryRow>('get_application_history', { p_id: row.id }),
+          // The safe reader returns only the terms this account is allowed to see: an approved
+          // offer, the one they accepted, or a disbursed tranche. Staff comments are not included.
+          rpc<Terms>('get_application_terms', { p_application_id: row.id }),
         ])
         if (d.error) throw new Error(d.error.message)
         setDocs((d.data ?? []) as DocRow[])
         setHistory(h)
+        setTerms(t)
       } else {
         setDocs([])
         setHistory([])
+        setTerms([])
       }
     } catch (e) {
       setError(describeError(e))
@@ -179,6 +215,40 @@ export default function ApplicationView() {
     const { error: e } = await supabase.rpc('resubmit_application', { p_id: app.id })
     setResubmitting(false)
     if (e) return setError(describeError(e))
+    await load()
+  }
+
+  /**
+   * Acceptance is deliberate: the student ticks a box and the RPC insists on p_accept = true. The
+   * browser never decides that terms are acceptable — it only sends the student's own decision.
+   */
+  const acceptTerms = async (t: Terms) => {
+    if (!acceptChecked) return
+    setTermsBusy(t.terms_id)
+    const { error: e } = await supabase.rpc('student_accept_terms', {
+      p_terms_id: t.terms_id,
+      p_accept: true,
+    })
+    setTermsBusy('')
+    if (e) return setError(describeError(e))
+    setAcceptChecked(false)
+    setNotice('You accepted these terms. The accountant can now disburse this tranche.')
+    await load()
+  }
+
+  /** A decline is a counter-offer request, not a rejection of the student. */
+  const declineTerms = async (t: Terms) => {
+    if (declineReason.trim().length < 3) return
+    setTermsBusy(t.terms_id)
+    const { error: e } = await supabase.rpc('student_decline_terms', {
+      p_terms_id: t.terms_id,
+      p_reason: declineReason.trim(),
+    })
+    setTermsBusy('')
+    if (e) return setError(describeError(e))
+    setDeclineFor('')
+    setDeclineReason('')
+    setNotice('Your reason was sent to the accountant. They will prepare revised terms.')
     await load()
   }
 
@@ -310,6 +380,8 @@ export default function ApplicationView() {
 
   const draft = app.status === 'DRAFT'
   const actionRequired = app.status === 'ACTION_REQUIRED'
+  const awaitingTerms = app.status === 'TERMS_APPROVED'
+  const pendingOffer = terms.find((t) => t.status === 'APPROVED_TERMS') ?? null
 
   return (
     <div className="mx-auto max-w-3xl space-y-5 px-4 py-8">
@@ -321,6 +393,11 @@ export default function ApplicationView() {
       </header>
 
       {error && <ErrorNote error={error} onRetry={() => void load()} />}
+      {notice && (
+        <div role="status" className="rounded-lg bg-green-50 p-3 text-sm text-green-800">
+          {notice}
+        </div>
+      )}
 
       {!draft && (
         <div className="card border-green-300 bg-green-50">
@@ -369,6 +446,128 @@ export default function ApplicationView() {
           </Link>
         )}
       </Card>
+
+      {awaitingTerms && (
+        <Card
+          title="Loan terms — your decision"
+          hint="These are the exact terms the manager approved. Read them before you accept."
+          actions={<Badge tone="amber">Action needed</Badge>}
+        >
+          {!pendingOffer ? (
+            <p className="text-sm text-slate-600">
+              Your terms are being finalised. Check this page again shortly — nothing is due from you
+              yet.
+            </p>
+          ) : (
+            <>
+              <dl>
+                <Row label="Tranche">Tranche {pendingOffer.tranche_no}</Row>
+                <Row label="Principal borrowed"><Money value={pendingOffer.principal_amount} /></Row>
+                <Row label="Annual interest rate">{Number(pendingOffer.annual_rate).toFixed(2)}% per year</Row>
+                <Row label="Repayment period">{monthsLabel(pendingOffer.period_months)}</Row>
+                <Row label="Monthly installment"><Money value={pendingOffer.installment_amount} /></Row>
+                <Row label="Total interest"><Money value={pendingOffer.total_interest} /></Row>
+                <Row label="Total to repay"><Money value={pendingOffer.total_repayable} /></Row>
+                {pendingOffer.approved_at && (
+                  <Row label="Approved by the manager on">{dateTime(pendingOffer.approved_at)}</Row>
+                )}
+              </dl>
+              <p className="mt-3 rounded-lg bg-blue-50 p-3 text-xs text-blue-900">
+                Interest is calculated on the <strong>reducing balance</strong>: each monthly payment
+                pays the interest due on what you still owe, then reduces the principal. Paying early
+                therefore reduces the interest you pay. Accepting these terms asks the accountant to
+                release this tranche; declining sends them back for a revised offer.
+              </p>
+
+              <label className="mt-4 flex items-start gap-2 text-sm text-slate-800">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={acceptChecked}
+                  disabled={termsBusy === pendingOffer.terms_id}
+                  onChange={(e) => setAcceptChecked(e.target.checked)}
+                />
+                <span>
+                  I have read and I accept these loan terms, including the{' '}
+                  <Money value={pendingOffer.total_repayable} /> total repayable over{' '}
+                  {monthsLabel(pendingOffer.period_months)}.
+                </span>
+              </label>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  className="btn-primary"
+                  disabled={!acceptChecked || termsBusy === pendingOffer.terms_id}
+                  onClick={() => void acceptTerms(pendingOffer)}
+                >
+                  {termsBusy === pendingOffer.terms_id ? 'Recording…' : 'Accept terms'}
+                </button>
+                <button
+                  className="btn-outline"
+                  disabled={termsBusy === pendingOffer.terms_id}
+                  onClick={() => {
+                    setAcceptChecked(false)
+                    setDeclineFor(declineFor ? '' : pendingOffer.terms_id)
+                    setDeclineReason('')
+                  }}
+                >
+                  {declineFor ? 'Cancel' : 'Ask for different terms'}
+                </button>
+              </div>
+
+              {declineFor === pendingOffer.terms_id && (
+                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <label className="block text-sm font-medium text-amber-900" htmlFor="decline-reason">
+                    What would you like the accountant to change?
+                  </label>
+                  <textarea
+                    id="decline-reason"
+                    className="input mt-1 w-full"
+                    rows={3}
+                    value={declineReason}
+                    onChange={(e) => setDeclineReason(e.target.value)}
+                    placeholder="For example: the monthly installment is more than I can afford."
+                  />
+                  <button
+                    className="btn-outline mt-2"
+                    disabled={declineReason.trim().length < 3 || termsBusy === pendingOffer.terms_id}
+                    onClick={() => void declineTerms(pendingOffer)}
+                  >
+                    {termsBusy === pendingOffer.terms_id ? 'Sending…' : 'Send request'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+
+      {terms.length > 0 && !awaitingTerms && (
+        <Card
+          title="Loan terms"
+          hint="The terms approved for each tranche of your loan."
+        >
+          <ul className="space-y-3">
+            {terms.map((t) => (
+              <li key={t.terms_id} className="rounded-lg border border-slate-200 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-navy">Tranche {t.tranche_no}</p>
+                  <Badge tone={STATUS_TONE[t.status] ?? 'slate'}>
+                    {TERMS_STATUS_LABEL[t.status] ?? t.status}
+                  </Badge>
+                </div>
+                <dl className="mt-2">
+                  <Row label="Principal"><Money value={t.principal_amount} /></Row>
+                  <Row label="Interest rate">{Number(t.annual_rate).toFixed(2)}% per year</Row>
+                  <Row label="Repayment period">{monthsLabel(t.period_months)}</Row>
+                  <Row label="Monthly installment"><Money value={t.installment_amount} /></Row>
+                  <Row label="Total to repay"><Money value={t.total_repayable} /></Row>
+                  {t.accepted_at && <Row label="Accepted on">{dateTime(t.accepted_at)}</Row>}
+                </dl>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <Card
         title={draft ? 'What you have entered so far' : 'Details you submitted'}

@@ -6,9 +6,11 @@ import {
   financialStepDone,
   guarantorStepDone,
   isEditable,
+  isOneOf,
   loanStepDone,
   maskInitials,
   missingDocuments,
+  monthsLabel,
   needsRegisterLookup,
   nextStep,
   prevStep,
@@ -291,13 +293,40 @@ describe('resumeStep', () => {
 })
 
 describe('isEditable', () => {
-  it('lets a student write only to a DRAFT, whatever else exists', () => {
+  it('lets a student write only to a DRAFT or an application sent back for action', () => {
     expect(isEditable('DRAFT')).toBe(true)
+    expect(isEditable('ACTION_REQUIRED')).toBe(true)
+    // Once staff own the file the student cannot change the numbers being assessed.
+    expect(isEditable('PENDING_LOAN_OFFICER')).toBe(false)
+    expect(isEditable('PENDING_MANAGER')).toBe(false)
+    expect(isEditable('PENDING_ACCOUNTANT')).toBe(false)
+    expect(isEditable('TERMS_APPROVED')).toBe(false)
+    expect(isEditable('SUBMITTED')).toBe(false)
     expect(isEditable('UNDER_REVIEW')).toBe(false)
-    expect(isEditable('ACTION_REQUIRED')).toBe(false)
     expect(isEditable('APPROVED')).toBe(false)
+    expect(isEditable('DISBURSED')).toBe(false)
     expect(isEditable('REJECTED')).toBe(false)
     expect(isEditable(null)).toBe(false)
+  })
+})
+
+describe('isOneOf', () => {
+  it('answers membership questions without a caller having to cast a string to a literal', () => {
+    const loanOfficer = ['PENDING_LOAN_OFFICER', 'RETURNED_TO_LOAN_OFFICER']
+    expect(isOneOf(loanOfficer, 'PENDING_LOAN_OFFICER')).toBe(true)
+    expect(isOneOf(loanOfficer, 'PENDING_MANAGER')).toBe(false)
+    expect(isOneOf(loanOfficer, null)).toBe(false)
+    expect(isOneOf(loanOfficer, undefined)).toBe(false)
+  })
+})
+
+describe('monthsLabel', () => {
+  it('pluralises only when more than one month is meant', () => {
+    expect(monthsLabel(1)).toBe('1 month')
+    expect(monthsLabel(2)).toBe('2 months')
+    expect(monthsLabel(3)).toBe('3 months')
+    expect(monthsLabel(null)).toBe('—')
+    expect(monthsLabel(undefined)).toBe('—')
   })
 })
 

@@ -151,6 +151,44 @@ export async function openDocument(path: string): Promise<void> {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
+// ---------------------------------------------------------------------------------------
+// Payment proofs (migration 030)
+//
+// Disbursements and non-cash repayments require evidence. The bucket is private and the storage
+// policy only accepts an object inside the uploader's own uid folder, so the path is built from
+// values this module controls, never from a typed filename.
+// ---------------------------------------------------------------------------------------
+
+export const PAYMENT_PROOF_BUCKET = 'payment-proofs'
+
+export async function uploadPaymentProof(
+  userId: string,
+  reference: string,
+  file: File,
+): Promise<string> {
+  const problem = fileProblem(file)
+  if (problem) throw new Error(problem)
+
+  const ext = EXT_FOR_TYPE[file.type] ?? 'bin'
+  const safe = reference.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 24) || 'proof'
+  const path = `${userId}/proof-${safe}-${Date.now()}.${ext}`
+  const { error } = await supabase.storage.from(PAYMENT_PROOF_BUCKET).upload(path, file, {
+    upsert: false,
+    contentType: file.type,
+    cacheControl: '3600',
+  })
+  if (error) throw new Error(error.message)
+  return path
+}
+
+export async function openPaymentProof(path: string): Promise<void> {
+  const { data, error } = await supabase.storage.from(PAYMENT_PROOF_BUCKET).createSignedUrl(path, 60)
+  if (error) throw new Error(error.message)
+  if (!data?.signedUrl) throw new Error('That proof of payment could not be opened.')
+  window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
+}
+
+
 /**
  * Deletes one object the caller owns, quietly.
  *

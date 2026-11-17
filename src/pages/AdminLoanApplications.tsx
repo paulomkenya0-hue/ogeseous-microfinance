@@ -2,52 +2,70 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAdminList } from '../lib/useAdminList'
-import { describeError } from '../lib/api'
-import { Badge, Card, Empty, ErrorNote, Money, Pager, STATUS_TONE, Table, askReason, confirmAction } from '../components/ui'
-import { STATUS_LABEL, purposeText as purpose } from '../lib/application'
+import { useAuth } from '../auth/AuthContext'
+import { Badge, Card, Empty, ErrorNote, Money, Pager, STATUS_TONE, Table } from '../components/ui'
+import {
+  MANAGER_ACTION_STATUSES,
+  LOAN_OFFICER_ACTION_STATUSES,
+  ACCOUNTANT_TERMS_STATUSES,
+  MANAGER_TERMS_STATUSES,
+  STATUS_LABEL,
+  isOneOf,
+  monthsLabel,
+  purposeText as purpose,
+} from '../lib/application'
 
 const PAGE_SIZE = 25
 
 type Row = {
   id: string
   application_number: string | null
-  amount: number
-  purpose: string
+  amount: number | null
+  purpose: string | null
   purpose_other: string | null
-  repayment_period_months: number
+  repayment_period_months: number | null
   status: string
   submitted_at: string | null
   action_required_note: string | null
 }
 
-/** The statuses an officer may still act on, in the order they normally happen. */
-const REVIEWABLE = ['SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED']
-const FILTERS = [
+/**
+ * Statuses worth filtering by, in the order an application normally passes through them. The list
+ * is deliberately a subset of the full status vocabulary: a filter for a status nobody can usefully
+ * search for is just a longer dropdown.
+ */
+const FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'All statuses' },
-  { value: 'SUBMITTED', label: 'Submitted' },
-  { value: 'UNDER_REVIEW', label: 'Under review' },
-  { value: 'ACTION_REQUIRED', label: 'Action required' },
-  { value: 'APPROVED', label: 'Approved' },
-  { value: 'REJECTED', label: 'Rejected' },
+  { value: 'PENDING_LOAN_OFFICER', label: 'With the loan officer' },
+  { value: 'RETURNED_TO_LOAN_OFFICER', label: 'Returned to the loan officer' },
+  { value: 'ACTION_REQUIRED', label: 'Action required from student' },
+  { value: 'PENDING_MANAGER', label: 'With the manager' },
+  { value: 'PENDING_ACCOUNTANT', label: 'With the accountant' },
+  { value: 'RETURNED_TO_ACCOUNTANT', label: 'Terms returned to accountant' },
+  { value: 'PENDING_TERMS_APPROVAL', label: 'Terms awaiting manager' },
+  { value: 'TERMS_APPROVED', label: 'Terms awaiting student' },
+  { value: 'TERMS_ACCEPTED', label: 'Terms accepted — to disburse' },
   { value: 'DISBURSED', label: 'Disbursed' },
-  { value: 'COMPLETED', label: 'Completed' },
+  { value: 'PAID_OFF', label: 'Paid off — to reconcile' },
+  { value: 'CLOSED', label: 'Closed' },
+  { value: 'REJECTED', label: 'Rejected' },
 ]
 
 /**
- * The review queue.
+ * The queue every stage of the workflow reads.
  *
- * Drafts are excluded, and not as a cosmetic choice: a draft belongs to the student, who has not
- * asked to be assessed yet, and letting it appear here would mean a decision could be taken on an
- * application whose owner is still typing into it.
+ * The decisions themselves live on /admin/applications/:id. They used to be available inline here
+ * as one-click buttons, which was fine while a single "review" step covered the whole workflow — an
+ * officer could approve without opening the file. The sequential workflow makes that unsafe: a
+ * forward has a mandatory assessment note, a manager's decision has a mandatory comment, and both
+ * are meant to be made with the documents and the financial picture on screen. So this page only
+ * finds the application and says whether it is your turn.
  *
- * Decisions here are the same ones available on the detail page, kept inline for the common case
- * because a reviewer working a queue should not have to open a record to say "keep under review".
- * Anything more than a one-click transition belongs on /admin/applications/:id, where the documents
- * and the financial picture are in front of the person making the call.
+ * Drafts are excluded: a draft belongs to the student, who has not asked to be assessed yet.
  */
 export default function AdminLoanApplications() {
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [actionError, setActionError] = useState('')
+  const { role } = useAuth()
+  const isSuper = role === 'SUPER_ADMIN'
 
   const [searchInput, setSearchInput] = useState('')
   const [statusInput, setStatusInput] = useState('')
@@ -63,7 +81,7 @@ export default function AdminLoanApplications() {
           { count: 'exact' },
         )
         .not('status', 'eq', 'DRAFT')
-        .order('submitted_at', { ascending: false })
+        .order('submitted_at', { ascending: false, nullsFirst: false })
       if (status) q = q.eq('status', status)
       // An empty box must search for nothing rather than for "%%", which PostgREST reads as
       // "match every row" and quietly turns the filter off.
@@ -84,43 +102,19 @@ export default function AdminLoanApplications() {
     list.reload()
   }
 
-  const act = async (id: string, decision: 'UNDER_REVIEW' | 'ACTION_REQUIRED' | 'APPROVED' | 'REJECTED') => {
-    setActionError('')
-
-    let note: string | null = null
-    if (decision === 'ACTION_REQUIRED') {
-      const given = askReason(
-        'What do you need from the student? This note is shown to them on their dashboard and on ' +
-          'the public tracking page, so say it in plain words.',
-        5,
-      )
-      if (given === null) return
-      note = given
+  /** Whether this row is waiting on the signed-in role. Mirrors each RPC's own check. */
+  const myTurn = (s: string): boolean => {
+    if (isSuper) return true
+    switch (role) {
+      case 'LOAN_OFFICER':
+        return isOneOf(LOAN_OFFICER_ACTION_STATUSES, s)
+      case 'MANAGER':
+        return isOneOf(MANAGER_ACTION_STATUSES, s) || isOneOf(MANAGER_TERMS_STATUSES, s)
+      case 'ACCOUNTANT':
+        return isOneOf(ACCOUNTANT_TERMS_STATUSES, s) || s === 'TERMS_ACCEPTED' || s === 'PAID_OFF'
+      default:
+        return false
     }
-    if (decision === 'REJECTED') {
-      const given = askReason('Reason for rejection (shown to the student):', 5)
-      if (given === null) return
-      note = given
-    }
-    if (
-      decision === 'APPROVED' &&
-      !confirmAction(
-        'Approve this application? Approval is a commitment to lend. Open the application and check ' +
-          'the documents first if you have not already.',
-      )
-    )
-      return
-
-    setBusyId(id)
-    const { error } = await supabase.rpc('review_loan_application', {
-      p_id: id,
-      p_decision: decision,
-      p_notes: note,
-    })
-    setBusyId(null)
-
-    if (error) return setActionError(describeError(error))
-    list.reload()
   }
 
   return (
@@ -128,7 +122,7 @@ export default function AdminLoanApplications() {
       <h1 className="text-2xl font-bold text-navy">Loan Applications</h1>
 
       <Card hint="A draft saved by a student is not shown here — it has not been submitted yet.">
-        <ErrorNote error={list.error || actionError} onRetry={list.reload} />
+        <ErrorNote error={list.error} onRetry={list.reload} />
 
         <form onSubmit={apply} className="mb-4 flex flex-wrap items-end gap-3">
           <label className="text-sm font-medium">
@@ -186,69 +180,43 @@ export default function AdminLoanApplications() {
           </Empty>
         ) : (
           <>
-            <Table head={['App no.', 'Amount', 'Purpose', 'Term', 'Status', 'Submitted', 'Action']}>
-              {list.rows.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="py-2 pr-3 font-mono text-xs">
-                    <Link className="underline" to={`/admin/applications/${r.id}`}>
-                      {r.application_number ?? 'Draft'}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <Money value={r.amount} />
-                  </td>
-                  <td className="py-2 pr-3 text-xs">{purpose(r.purpose, r.purpose_other)}</td>
-                  <td className="py-2 pr-3 text-xs">{r.repayment_period_months} mo</td>
-                  <td className="py-2 pr-3">
-                    <Badge tone={STATUS_TONE[r.status] ?? 'slate'}>
-                      {STATUS_LABEL[r.status] ?? r.status}
-                    </Badge>
-                    {r.action_required_note && r.status === 'ACTION_REQUIRED' && (
-                      <p className="mt-1 max-w-xs text-xs text-amber-800">{r.action_required_note}</p>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-xs text-slate-500">
-                    {r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : '—'}
-                  </td>
-                  <td className="py-2 pr-3">
-                    {REVIEWABLE.includes(r.status) ? (
-                      <div className="flex flex-wrap gap-1">
-                        <Link
-                          className="btn-outline px-2 py-1 text-xs"
-                          to={`/admin/applications/${r.id}`}
-                        >
-                          Open
-                        </Link>
-                        <button
-                          className="btn-primary px-2 py-1 text-xs"
-                          disabled={busyId === r.id}
-                          onClick={() => void act(r.id, 'APPROVED')}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="btn-outline px-2 py-1 text-xs"
-                          disabled={busyId === r.id || r.status === 'UNDER_REVIEW'}
-                          onClick={() => void act(r.id, 'ACTION_REQUIRED')}
-                        >
-                          Request info
-                        </button>
-                        <button
-                          className="btn border border-red-300 px-2 py-1 text-xs text-red-700"
-                          disabled={busyId === r.id}
-                          onClick={() => void act(r.id, 'REJECTED')}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    ) : (
-                      <Link className="text-xs text-brand underline" to={`/admin/applications/${r.id}`}>
-                        Open
+            <Table head={['App no.', 'Amount', 'Purpose', 'Term', 'Status', 'Submitted', '']}>
+              {list.rows.map((r) => {
+                const mine = myTurn(r.status)
+                return (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      <Link className="underline" to={`/admin/applications/${r.id}`}>
+                        {r.application_number ?? 'Draft'}
                       </Link>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Money value={r.amount} />
+                    </td>
+                    <td className="py-2 pr-3 text-xs">{purpose(r.purpose, r.purpose_other)}</td>
+                    <td className="py-2 pr-3 text-xs">{monthsLabel(r.repayment_period_months)}</td>
+                    <td className="py-2 pr-3">
+                      <Badge tone={STATUS_TONE[r.status] ?? 'slate'}>
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </Badge>
+                      {r.action_required_note && r.status === 'ACTION_REQUIRED' && (
+                        <p className="mt-1 max-w-xs text-xs text-amber-800">{r.action_required_note}</p>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-xs text-slate-500">
+                      {r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Link
+                        className={mine ? 'btn-primary px-2 py-1 text-xs' : 'btn-outline px-2 py-1 text-xs'}
+                        to={`/admin/applications/${r.id}`}
+                      >
+                        {mine ? 'Needs your action' : 'Open'}
+                      </Link>
+                    </td>
+                  </tr>
+                )
+              })}
             </Table>
             {list.pageable && (
               <Pager page={list.page} count={list.count} pageSize={PAGE_SIZE} onPage={list.setPage} />
