@@ -889,14 +889,31 @@ const confirmed = !!draft?.student_confirmed_at && !recheck
                 />
                 <ReadOnly label="Year of study" value={draft?.year_of_study ?? profile?.year_of_study} />
                 <ReadOnly label="Form Four index number" value={profile?.form_four_index_number} />
+                {draft?.verification_method === 'RUCU_REGISTER' && (
+                  <div className="sm:col-span-2 space-y-2">
+                    <label className="block text-sm font-medium">Form Four Index Number (self-reported; staff must verify)</label>
+                    <input className="input" value={declIndex} onChange={(e) => setDeclIndex(e.target.value)} placeholder="S0000/0000/2022" />
+                    <button type="button" className="btn-outline" disabled={busy !== null || !declIndex.trim()} onClick={async () => {
+                      setBusy('index')
+                      setErr({})
+                      try {
+                        const { error } = await supabase.rpc('submit_rucu_form_four_index', { p_index: declIndex.trim() })
+                        if (error) throw error
+                        await load()
+                        setNote('Form Four index submitted for staff verification.')
+                      } catch (e) { setErr({ form: describeError(e) }) }
+                      finally { setBusy(null) }
+                    }}>{busy === 'index' ? 'Saving…' : 'Save Form Four Index Number'}</button>
+                    <p className="text-xs text-slate-500">This does not verify your identity. Staff must confirm the number against supporting documents.</p>
+                  </div>
+                )}
               </dl>
               <p className="mt-4 text-xs text-slate-500">
                 Confirmed {dateTime(draft?.student_confirmed_at)} by{' '}
                 {draft?.verification_method === 'RUCU_REGISTER'
                   ? 'matching the RUCU register'
                   : 'your own declaration, to be confirmed by staff during review'}
-                . These fields cannot be edited here, on purpose: the application always shows what
-                the register shows. If one of them is wrong, contact OGESEOUS.
+                . Register identity details are read-only. You may submit your Form Four index above for staff review.
               </p>
               <div className="mt-4 flex gap-2">
                 <button className="btn-primary" onClick={() => go(nextStep('student') ?? 'contact')}>

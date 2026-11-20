@@ -74,29 +74,44 @@ export default function AdminStudents() {
       header: true,
       skipEmptyLines: true,
       complete: async (res) => {
-        const required = ['form_four_index_number', 'registration_number', 'last_name', 'full_name']
         const headers = res.meta.fields ?? []
-        const missing = required.filter((h) => !headers.includes(h))
-        if (missing.length > 0) {
+        if (!headers.includes('registration_number')) {
           setImporting(false)
-          setImportErr(`CSV is missing required columns: ${missing.join(', ')}`)
+          setImportErr('CSV is missing registration_number.')
           return
         }
-
-        const rows = res.data.filter((r) => r.form_four_index_number && r.registration_number)
-        if (rows.length === 0) {
+        const rows = res.data.map((r) => {
+          const first = (r.first_name ?? '').trim()
+          const middle = (r.middle_name ?? '').trim()
+          const last = (r.last_name ?? '').trim()
+          const full = (r.full_name ?? '').trim() || [first, middle, last].filter(Boolean).join(' ')
+          return {
+            ...r,
+            registration_number: (r.registration_number ?? '').trim(),
+            form_four_index_number: (r.form_four_index_number ?? '').trim(),
+            last_name: last || full.split(/\s+/).slice(-1)[0] || '',
+            full_name: full,
+          }
+        }).filter((r) => r.registration_number && r.last_name && r.full_name)
+        if (!rows.length) {
           setImporting(false)
-          setImportErr('No usable rows found. Every row needs a Form Four Index Number and a Registration Number.')
+          setImportErr('No usable rows: registration_number and student name are required.')
           return
         }
-
-        const { data, error } = await supabase.rpc('import_rucu_students', { p_rows: rows })
-        setImporting(false)
-        if (error) {
-          setImportErr(describeError(error))
-          return
+        let imported = 0
+        try {
+          for (let offset = 0; offset < rows.length; offset += 200) {
+            const { data, error } = await supabase.rpc('import_rucu_students', { p_rows: rows.slice(offset, offset + 200) })
+            if (error) throw error
+            imported += Number(data ?? 0)
+            setImportMsg(`Imported ${imported} / ${rows.length} records…`)
+          }
+          setImportMsg(`Imported or updated ${imported} record(s); skipped ${res.data.length - rows.length} incomplete row(s).`)
+        } catch (error) {
+          setImportErr(`Import stopped after ${imported} records: ${describeError(error)}`)
+        } finally {
+          setImporting(false)
         }
-        setImportMsg(`Imported or updated ${Number(data ?? rows.length)} register record(s).`)
       },
       error: () => {
         setImporting(false)
@@ -111,7 +126,7 @@ export default function AdminStudents() {
 
       <Card
         title="RUCU student register"
-        hint="CSV columns: form_four_index_number, registration_number, last_name, full_name. Existing rows are updated, not duplicated."
+        hint="CSV: registration_number and student name required. Form Four index may be blank and supplied later. Existing registrations are updated."
       >
         <input
           type="file"
