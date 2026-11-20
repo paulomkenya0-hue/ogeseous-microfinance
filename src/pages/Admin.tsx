@@ -34,7 +34,7 @@ const NAV: Item[] = [
   { label: 'Dashboard', roles: ['LOAN_OFFICER', 'ACCOUNTANT', 'COLLECTION_OFFICER', 'MARKETING_OFFICER', 'MANAGER', 'SUPER_ADMIN'] },
   // verification_requests and rcu_students are readable by is_admin() = MANAGER / SUPER_ADMIN.
   { label: 'Students', roles: ['MANAGER', 'SUPER_ADMIN'] },
-  { label: 'Applications', roles: ['LOAN_OFFICER', 'MANAGER', 'SUPER_ADMIN'] },
+  { label: 'Applications', roles: ['LOAN_OFFICER', 'ACCOUNTANT', 'MANAGER', 'SUPER_ADMIN'] },
   { label: 'Loans', roles: ['LOAN_OFFICER', 'ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'] },
   { label: 'Repayments', roles: ['ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'] },
   { label: 'Collections', roles: ['ACCOUNTANT', 'COLLECTION_OFFICER', 'MANAGER', 'SUPER_ADMIN'] },
