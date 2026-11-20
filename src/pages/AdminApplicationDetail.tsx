@@ -103,6 +103,7 @@ type Terms = {
   status: string
   principal_amount: number
   annual_rate: number
+  monthly_rate?: number | null
   period_months: number
   installment_amount: number
   total_interest: number
@@ -200,7 +201,7 @@ export default function AdminApplicationDetail() {
         supabase.from('loan_documents').select('doc_type,storage_path,uploaded_at').eq('application_id', id),
         rpc<HistoryRow>('get_application_history', { p_id: id }),
         rpc<WorkflowRow>('get_application_workflow', { p_application_id: id }),
-        rpc<Terms>('get_application_terms', { p_application_id: id }),
+        rpc<Terms>('get_application_terms_v2', { p_application_id: id }),
         supabase
           .from('disbursements')
           .select('id,tranche_no,amount,channel,reference,proof_path,status,disbursed_at,void_reason')
@@ -616,7 +617,7 @@ export default function AdminApplicationDetail() {
                       <Row label="Principal">
                         <Money value={t.principal_amount} />
                       </Row>
-                      <Row label="Interest rate">{t.annual_rate}% a year, reducing balance</Row>
+                      <Row label="Interest rate">{t.monthly_rate != null ? `${t.monthly_rate}% per month, flat` : `${t.annual_rate}% a year, reducing balance (legacy terms)`}</Row>
                       <Row label="Repayment period">{monthsLabel(t.period_months)}</Row>
                       <Row label="Monthly installment">
                         <Money value={t.installment_amount} />
@@ -933,7 +934,7 @@ function TermsForm({
   // Prefill from the returned draft, or from what is left of the requested amount.
   useEffect(() => {
     setPrincipal(String(draft?.principal_amount ?? (remaining > 0.01 ? remaining : requested)))
-    setRate(String(draft?.annual_rate ?? defaultRate))
+    setRate(String(draft?.monthly_rate ?? (draft ? 0 : 0)))
     setMonths(String(draft?.period_months ?? periods[0] ?? 1))
     setComment(draft?.accountant_comment ?? '')
   }, [draft, remaining, requested, defaultRate, periods])
@@ -948,7 +949,7 @@ function TermsForm({
       return
     }
     let active = true
-    rpcOne<Quote>('loan_quote', { p_principal: p, p_annual_rate: r, p_months: m })
+    rpcOne<Quote>('loan_quote_flat_monthly', { p_principal: p, p_monthly_rate: r, p_months: m })
       .then((q) => {
         if (!active) return
         setQuote(q)
@@ -969,7 +970,7 @@ function TermsForm({
     const r = Number(rate)
     const m = Number(months)
     if (!Number.isFinite(p) || p <= 0) return onError('Enter the amount to be paid out in this tranche.')
-    if (!Number.isFinite(r) || r < 0) return onError('Enter the annual interest rate for this tranche.')
+    if (!Number.isFinite(r) || r < 0) return onError('Enter the monthly flat interest rate for this tranche.')
     if (!periods.includes(m)) return onError('Choose a repayment period of 1, 2 or 3 months.')
 
     setBusy('terms')
@@ -989,7 +990,7 @@ function TermsForm({
   return (
     <Card
       title={draft ? 'Accountant — correct the returned terms' : 'Accountant — prepare loan terms'}
-      hint="The rate is a per-loan decision. The manager approves these exact terms before the student sees them."
+      hint="Enter the flat monthly rate for this tranche. The manager approves the exact total repayment before the student accepts."
     >
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="block text-sm font-medium">
@@ -1002,7 +1003,7 @@ function TermsForm({
           />
         </label>
         <label className="block text-sm font-medium">
-          Annual interest rate (%)
+          Monthly flat interest rate (%)
           <input
             className="input mt-1"
             inputMode="decimal"

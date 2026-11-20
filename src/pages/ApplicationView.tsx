@@ -67,6 +67,7 @@ type Terms = {
   status: string
   principal_amount: number
   annual_rate: number
+  monthly_rate?: number | null
   period_months: number
   installment_amount: number
   total_interest: number
@@ -153,7 +154,7 @@ export default function ApplicationView() {
           rpc<HistoryRow>('get_application_history', { p_id: row.id }),
           // The safe reader returns only the terms this account is allowed to see: an approved
           // offer, the one they accepted, or a disbursed tranche. Staff comments are not included.
-          rpc<Terms>('get_application_terms', { p_application_id: row.id }),
+          rpc<Terms>('get_application_terms_v2', { p_application_id: row.id }),
         ])
         if (d.error) throw new Error(d.error.message)
         setDocs((d.data ?? []) as DocRow[])
@@ -463,7 +464,7 @@ export default function ApplicationView() {
               <dl>
                 <Row label="Tranche">Tranche {pendingOffer.tranche_no}</Row>
                 <Row label="Principal borrowed"><Money value={pendingOffer.principal_amount} /></Row>
-                <Row label="Annual interest rate">{Number(pendingOffer.annual_rate).toFixed(2)}% per year</Row>
+                <Row label="Interest rate">{pendingOffer.monthly_rate != null ? `${Number(pendingOffer.monthly_rate).toFixed(2)}% per month (flat)` : `${Number(pendingOffer.annual_rate).toFixed(2)}% per year (legacy reducing balance)`}</Row>
                 <Row label="Repayment period">{monthsLabel(pendingOffer.period_months)}</Row>
                 <Row label="Monthly installment"><Money value={pendingOffer.installment_amount} /></Row>
                 <Row label="Total interest"><Money value={pendingOffer.total_interest} /></Row>
@@ -557,7 +558,7 @@ export default function ApplicationView() {
                 </div>
                 <dl className="mt-2">
                   <Row label="Principal"><Money value={t.principal_amount} /></Row>
-                  <Row label="Interest rate">{Number(t.annual_rate).toFixed(2)}% per year</Row>
+                  <Row label="Interest rate">{t.monthly_rate != null ? `${Number(t.monthly_rate).toFixed(2)}% per month (flat)` : `${Number(t.annual_rate).toFixed(2)}% per year (legacy reducing balance)`}</Row>
                   <Row label="Repayment period">{monthsLabel(t.period_months)}</Row>
                   <Row label="Monthly installment"><Money value={t.installment_amount} /></Row>
                   <Row label="Total to repay"><Money value={t.total_repayable} /></Row>
