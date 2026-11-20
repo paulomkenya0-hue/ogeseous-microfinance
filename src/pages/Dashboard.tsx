@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../auth/AuthContext'
 import { describeError, tzs } from '../lib/api'
@@ -119,15 +119,13 @@ function ReferralPrompt({ userId }: { userId: string }) {
  * for a student with no application at all.
  */
 export default function Dashboard() {
-  const { session, signOut } = useAuth()
-  const nav = useNavigate()
+  const { session } = useAuth()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [account, setAccount] = useState<Account | null>(null)
   const [application, setApplication] = useState<Application | null>(null)
   const [loan, setLoan] = useState<Loan | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const [deleting, setDeleting] = useState(false)
   const [resubmitting, setResubmitting] = useState(false)
   const [actionError, setActionError] = useState('')
 
@@ -185,21 +183,6 @@ export default function Dashboard() {
   useEffect(() => {
     void load()
   }, [load])
-
-  const deleteAccount = async () => {
-    const confirmText =
-      'This permanently deletes your account, profile and uploaded documents. It is only possible ' +
-      'while no loan is on record. Continue?'
-    if (!window.confirm(confirmText)) return
-    setDeleting(true)
-    setActionError('')
-    const { error: e } = await supabase.rpc('delete_my_account')
-    setDeleting(false)
-    if (e) return setActionError(describeError(e))
-    // The auth identity is gone; drop the stale local session and leave the protected area.
-    await signOut()
-    nav('/login', { replace: true })
-  }
 
   const resubmit = async () => {
     if (!application) return
@@ -405,19 +388,12 @@ export default function Dashboard() {
 
       <ReferralPrompt userId={session!.user.id} />
 
-      <Card title="Your data">
+      <Card title="Account management">
         <p className="text-sm text-slate-600">
-          You can delete your account and everything in it while no loan is on record. Deleting is
-          permanent.
+          For your security and the integrity of loan records, account closure is handled
+          by OGESEOUS management. Contact the Manager or Super Administrator to request
+          account closure or correction of your personal information.
         </p>
-        <button
-          className="btn mt-3 border border-red-300 text-red-700 disabled:opacity-50"
-          disabled={deleting || !!loan}
-          title={loan ? 'Settle or write off your loan before deleting your account' : undefined}
-          onClick={() => void deleteAccount()}
-        >
-          {deleting ? 'Deleting…' : 'Delete my account'}
-        </button>
       </Card>
     </div>
   )
