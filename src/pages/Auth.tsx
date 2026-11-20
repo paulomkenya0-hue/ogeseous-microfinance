@@ -176,7 +176,9 @@ export function Login() {
     }
 
     if (!isEmail(id)) return setErr({ id: 'Enter your email address first.' })
-    const { error } = await supabase.auth.resetPasswordForEmail(id.trim())
+    const { error } = await supabase.auth.resetPasswordForEmail(id.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
     if (error) return setErr({ form: describeError(error) })
     setMsg('If that address has an account, a reset link is on its way. The link opens a page where you can set a new password.')
   }
