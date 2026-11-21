@@ -27,7 +27,7 @@ type Application = {
   review_notes: string | null
   action_required_note: string | null
 }
-type Loan = { id: string; status: string; outstanding_balance: number }
+type Loan = { id: string; application_id: string; status: string; outstanding_balance: number; principal_amount: number; total_interest: number | null; total_repayable: number | null }
 
 /**
  * How did you hear about us? Kept from the original dashboard because the referral capture is a
@@ -124,6 +124,9 @@ export default function Dashboard() {
   const [account, setAccount] = useState<Account | null>(null)
   const [application, setApplication] = useState<Application | null>(null)
   const [loan, setLoan] = useState<Loan | null>(null)
+  const [loanHistory, setLoanHistory] = useState<Loan[]>([])
+  const [applicationHistory, setApplicationHistory] = useState<Application[]>([])
+  const [historyError, setHistoryError] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [resubmitting, setResubmitting] = useState(false)
@@ -149,13 +152,13 @@ export default function Dashboard() {
           )
           .eq('user_id', uid)
           .order('created_at', { ascending: false })
-          .limit(1),
+          .limit(100),
         supabase
           .from('loans')
-          .select('id,status,outstanding_balance')
+          .select('id,application_id,status,outstanding_balance,principal_amount,total_interest,total_repayable')
           .eq('user_id', uid)
           .order('created_at', { ascending: false })
-          .limit(1),
+          .limit(100),
       ])
       // The profile is the one read that must succeed. The rest are decoration: failing them should
       // not blank the whole dashboard the way a single throw used to.
@@ -168,11 +171,14 @@ export default function Dashboard() {
       // ends up believing they are still under review. Only the newest row is read at all.
       const rows = (a.data ?? []) as Application[]
       setApplication(rows[0] ?? null)
+      setApplicationHistory(rows)
+      setHistoryError(Boolean(a.error || l.error))
 
       // A student can have more than one loan over time (a closed one and a current one), which
       // made maybeSingle() fail and hid the loan entirely. Show the newest.
       const loanRows = (l.data ?? []) as Loan[]
       setLoan(l.error ? null : (loanRows[0] ?? null))
+      setLoanHistory(l.error ? [] : loanRows)
     } catch (e) {
       setError(describeError(e))
     } finally {
@@ -214,6 +220,9 @@ export default function Dashboard() {
   const actionRequired = status === 'ACTION_REQUIRED'
   const awaitingTerms = status === 'TERMS_APPROVED'
   const rejected = status === 'REJECTED'
+  const closed = status === 'CLOSED' || status === 'CLOSED_RECONCILED'
+  const allLoansClosed = loanHistory.every((item) => item.status === 'CLOSED' && Number(item.outstanding_balance) <= 0.01)
+  const canReapply = account?.status === 'ACTIVE' && closed && !historyError && allLoansClosed && loanHistory.some((item) => item.application_id === application?.id)
 
   return (
     <div className="mx-auto max-w-4xl space-y-5 px-4 py-8">
@@ -323,6 +332,14 @@ export default function Dashboard() {
                   VIEW APPLICATION
                 </Link>
               )}
+              {canReapply && (
+                <Link to="/loan/apply" className="btn-primary">
+                  APPLY FOR ANOTHER LOAN
+                </Link>
+              )}
+              {closed && !canReapply && (
+                <p className="w-full text-sm text-amber-800">A new loan is available after the previous loan is fully reconciled and all balances are cleared. Contact the office if your loan is already closed.</p>
+              )}
               {rejected && (
                 <Link to="/loan/apply" className="btn-outline">
                   APPLY AGAIN
@@ -360,6 +377,40 @@ export default function Dashboard() {
           </Link>
         </Card>
       )}
+
+      <Card title="My loan history">
+        {historyError ? (
+          <ErrorNote error="Could not load your full loan history. Retry before applying again." onRetry={() => void load()} />
+        ) : applicationHistory.length === 0 ? (
+          <p className="text-sm text-slate-600">No applications yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {applicationHistory.map((item) => {
+              const related = loanHistory.find((entry) => entry.application_id === item.id)
+              const paid = related ? Math.max(0, Number(related.total_repayable ?? 0) - Number(related.outstanding_balance)) : null
+              return (
+                <div key={item.id} className="rounded-lg border border-slate-200 p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono font-semibold text-navy">{item.application_number ?? 'Draft application'}</span>
+                    <Badge tone={STATUS_TONE[item.status] ?? 'slate'}>{STATUS_LABEL[item.status] ?? item.status}</Badge>
+                  </div>
+                  <p className="mt-1 text-slate-600">Requested: {tzs(Number(item.amount ?? 0))} · {item.submitted_at ? dateTime(item.submitted_at) : 'Not submitted'}</p>
+                  {related && (
+                    <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                      <p>Disbursed principal: {tzs(Number(related.principal_amount))}</p>
+                      <p>Interest: {tzs(Number(related.total_interest ?? 0))}</p>
+                      <p>Total repayable: {tzs(Number(related.total_repayable ?? 0))}</p>
+                      <p>Repaid: {tzs(paid ?? 0)}</p>
+                      <p>Balance: {tzs(Number(related.outstanding_balance))}</p>
+                      <p>Loan status: {related.status}</p>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </Card>
 
       <Card title="Your details">
         <dl className="grid gap-3 sm:grid-cols-2">

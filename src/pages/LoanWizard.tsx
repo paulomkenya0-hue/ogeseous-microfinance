@@ -86,7 +86,7 @@ type Policy = {
 
 type DocRow = { doc_type: string; storage_path: string; uploaded_at: string }
 
-const OPEN_STATUSES = ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED'] as const
+const OPEN_STATUSES = ['DRAFT','SUBMITTED','UNDER_REVIEW','ACTION_REQUIRED','PENDING_LOAN_OFFICER','RETURNED_TO_LOAN_OFFICER','PENDING_MANAGER','PENDING_ACCOUNTANT','RETURNED_TO_ACCOUNTANT','PENDING_TERMS_APPROVAL','TERMS_APPROVED','TERMS_ACCEPTED'] as const
 const STEP_LIST = WIZARD_STEPS.map((key) => ({ key, label: STEP_LABELS[key] }))
 
 /**
@@ -334,7 +334,11 @@ export default function LoanWizard() {
       const pol = await rpcOne<Policy>('loan_policy').catch(() => null)
       setPolicy(pol)
 
-      applyForm(p, open)
+      // Keep prior financial and guarantor details as editable defaults for repeat applicants.
+      // Never reuse an old application ID or its uploaded documents.
+      const prior = !open && ['CLOSED', 'CLOSED_RECONCILED'].includes(latest?.status ?? '') ? latest : null
+      applyForm(p, open ?? prior)
+      if (prior) setDraft(null)
       // The fetched map is used directly rather than reading `docs` back out of state: setDocs has
       // not taken effect yet at this point in the same tick, and resuming on the wrong step because
       // of that would send a student with three uploaded documents back to step 6.
